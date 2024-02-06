@@ -1,0 +1,14 @@
+.{
+    .name = "zix",
+    .version = "0.0.1",
+    .dependencies = .{
+        .zig = .{
+            //.url = "https://github.com/zix-os/zig/archive/cd120740a9b0fccaa30a4c95c836e206ec4173aa.tar.gz",
+            //.hash = "1220ed1c041ec2b9deb0b251012fe317e14c4ac42fabe2fb177ef5dbac0fa8380c9d",
+            .path = "./zix-zig",
+        },
+    },
+    .paths = .{
+        ".",
+    },
+}
