@@ -21,12 +21,17 @@
   inputs.git-hooks-nix.inputs.flake-compat.follows = "";
   inputs.git-hooks-nix.inputs.gitignore.follows = "";
   inputs.nixfmt.url = "github:NixOS/nixfmt";
+  inputs.zig = {
+    url = "github:ziglang/zig?ref=pull/20511/head";
+    flake = false;
+  };
 
   outputs =
     inputs@{
       self,
       nixpkgs,
       nixpkgs-regression,
+      zig,
       ...
     }:
 
@@ -189,6 +194,20 @@
                 })
             else
               prev.pre-commit;
+
+          zig_0_14 = (prev.zig.overrideAttrs (f: p: {
+            version = "0.14.0-git+${inputs.zig.shortRev or "dirty"}";
+            src = inputs.zig;
+
+            doInstallCheck = false;
+
+            postBuild = "";
+            postInstall = "";
+
+            outputs = [ "out" ];
+          })).override {
+            llvmPackages = final.llvmPackages_19;
+          };
         };
 
     in

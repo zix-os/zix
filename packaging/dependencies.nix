@@ -100,6 +100,7 @@ let
     nativeBuildInputs = [
       pkgs.buildPackages.meson
       pkgs.buildPackages.ninja
+      pkgs.buildPackages.zig_0_14
     ] ++ prevAttrs.nativeBuildInputs or [ ];
     mesonCheckFlags = prevAttrs.mesonCheckFlags or [ ] ++ [
       "--print-errorlogs"
