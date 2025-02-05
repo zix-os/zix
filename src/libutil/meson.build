@@ -106,6 +106,8 @@ deps_private += cpuid
 nlohmann_json = dependency('nlohmann_json', version : '>= 3.9')
 deps_public += nlohmann_json
 
+subdir('nix-meson-build-support/zig')
+
 cxx = meson.get_compiler('cpp')
 
 config_h = configure_file(
@@ -263,9 +265,17 @@ endif
 subdir('nix-meson-build-support/export-all-symbols')
 subdir('nix-meson-build-support/windows-version')
 
+this_zig_object = custom_target(
+  'zig build-obj',
+  command: [zig, 'build-obj', '-femit-h=@OUTDIR@/libutil-zig.h', '-femit-bin=@OUTPUT@', zig_args, '@INPUT@'],
+  output: 'libutil-zig.o',
+  input: 'libutil.zig',
+)
+
 this_library = library(
   'nixutil',
   sources,
+  this_zig_object,
   dependencies : deps_public + deps_private + deps_other,
   include_directories : include_dirs,
   link_args: linker_export_flags,

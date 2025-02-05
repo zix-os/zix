@@ -38,6 +38,7 @@ mkMesonLibrary (finalAttrs: {
     ./windows/meson.build
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
     (fileset.fileFilter (file: file.hasExt "hh") ./.)
+    (fileset.fileFilter (file: file.hasExt "zig") ./.)
   ];
 
   buildInputs = [
