@@ -34,7 +34,7 @@ in
 {
   version = with zixVersion; baseVersion + versionSuffix;
   inherit (zixVersion) versionSuffix;
-  inherit nixVersion;
+  inherit nixVersion zixVersion;
 
   nix-util = callPackage ../src/libutil/package.nix { };
   nix-util-c = callPackage ../src/libutil-c/package.nix { };
