@@ -1,4 +1,4 @@
-project('nix-util', 'cpp',
+project('nix-util', 'cpp', 'c',
   version : files('.version'),
   default_options : [
     'cpp_std=c++2a',
@@ -9,6 +9,8 @@ project('nix-util', 'cpp',
   meson_version : '>= 1.1',
   license : 'LGPL-2.1-or-later',
 )
+
+fs = import('fs')
 
 cxx = meson.get_compiler('cpp')
 
@@ -95,13 +97,7 @@ brotli = [
 ]
 deps_private += brotli
 
-cpuid_required = get_option('cpuid')
-if host_machine.cpu_family() != 'x86_64' and cpuid_required.enabled()
-  warning('Force-enabling seccomp on non-x86_64 does not make sense')
-endif
-cpuid = dependency('libcpuid', 'cpuid', required : cpuid_required)
-configdata.set('HAVE_LIBCPUID', cpuid.found().to_int())
-deps_private += cpuid
+configdata.set('HAVE_LIBCPUID', get_option('cpuid').to_int())
 
 nlohmann_json = dependency('nlohmann_json', version : '>= 3.9')
 deps_public += nlohmann_json
@@ -265,17 +261,21 @@ endif
 subdir('nix-meson-build-support/export-all-symbols')
 subdir('nix-meson-build-support/windows-version')
 
-this_zig_object = custom_target(
+sources += custom_target(
   'zig build-obj',
-  command: [zig, 'build-obj', '-femit-h=@OUTDIR@/libutil-zig.h', '-femit-bin=@OUTPUT@', zig_args, '@INPUT@'],
-  output: 'libutil-zig.o',
+  command: [zig, 'build-lib', '-femit-h=@OUTDIR@/libutil-zig.h', '-femit-bin=@OUTPUT@', '-ofmt=c', zig_args, '@INPUT@'],
+  output: 'libutil-zig.c',
   input: 'libutil.zig',
+  depend_files: [
+    'cpuid.zig'
+  ],
 )
+
+include_dirs += fs.parent(fs.parent(zig.full_path())) / 'lib' / 'zig'
 
 this_library = library(
   'nixutil',
   sources,
-  this_zig_object,
   dependencies : deps_public + deps_private + deps_other,
   include_directories : include_dirs,
   link_args: linker_export_flags,
