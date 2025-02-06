@@ -6,7 +6,6 @@
   boost,
   brotli,
   libarchive,
-  libcpuid,
   libsodium,
   nlohmann_json,
   openssl,
@@ -45,7 +44,7 @@ mkMesonLibrary (finalAttrs: {
     brotli
     libsodium
     openssl
-  ] ++ lib.optional stdenv.hostPlatform.isx86_64 libcpuid;
+  ];
 
   propagatedBuildInputs = [
     boost
@@ -65,7 +64,7 @@ mkMesonLibrary (finalAttrs: {
     '';
 
   mesonFlags = [
-    (lib.mesonEnable "cpuid" stdenv.hostPlatform.isx86_64)
+    (lib.mesonBool "cpuid" (stdenv.hostPlatform.isx86_64 || stdenv.hostPlatform.isAarch64))
   ];
 
   env = {
