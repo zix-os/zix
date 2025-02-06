@@ -79,7 +79,7 @@ int main()
 ```ShellSession
 $ gcc main.c $(pkg-config nix-expr-c --libs --cflags) -o main
 $ ./main
-Nix version: 2.17
+Zix version: 2.17
 ```
 
 # Writing a Nix language plug-in
