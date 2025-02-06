@@ -149,14 +149,14 @@
           # without "polluting" the top level "`pkgs`" attrset.
           # This also has the benefit of providing us with a distinct set of packages
           # we can iterate over.
-          nixComponents =
+          zixComponents =
             lib.makeScopeWithSplicing'
               {
                 inherit (final) splicePackages;
-                inherit (final.nixDependencies) newScope;
+                inherit (final.zixDependencies) newScope;
               }
               {
-                otherSplices = final.generateSplicesForMkScope "nixComponents";
+                otherSplices = final.generateSplicesForMkScope "zixComponents";
                 f = import ./packaging/components.nix {
                   inherit (final) lib;
                   inherit officialRelease;
@@ -165,22 +165,22 @@
               };
 
           # The dependencies are in their own scope, so that they don't have to be
-          # in Nixpkgs top level `pkgs` or `nixComponents`.
-          nixDependencies =
+          # in Nixpkgs top level `pkgs` or `zixComponents`.
+          zixDependencies =
             lib.makeScopeWithSplicing'
               {
                 inherit (final) splicePackages;
-                inherit (final) newScope; # layered directly on pkgs, unlike nixComponents above
+                inherit (final) newScope; # layered directly on pkgs, unlike zixComponents above
               }
               {
-                otherSplices = final.generateSplicesForMkScope "nixDependencies";
+                otherSplices = final.generateSplicesForMkScope "zixDependencies";
                 f = import ./packaging/dependencies.nix {
                   inherit inputs stdenv;
                   pkgs = final;
                 };
               };
 
-          nix = final.nixComponents.nix-cli;
+          zix = final.zixComponents.nix-cli;
 
           # See https://github.com/NixOS/nixpkgs/pull/214409
           # Remove when fixed in this flake's nixpkgs
@@ -269,7 +269,7 @@
             )
             (
               nixpkgsPrefix: nixpkgs:
-              flatMapAttrs nixpkgs.nixComponents (
+              flatMapAttrs nixpkgs.zixComponents (
                 pkgName: pkg:
                 flatMapAttrs pkg.tests or { } (
                   testName: test: {
@@ -278,7 +278,7 @@
                 )
               )
               // lib.optionalAttrs (nixpkgs.stdenv.hostPlatform == nixpkgs.stdenv.buildPlatform) {
-                "${nixpkgsPrefix}nix-functional-tests" = nixpkgs.nixComponents.nix-functional-tests;
+                "${nixpkgsPrefix}nix-functional-tests" = nixpkgs.zixComponents.nix-functional-tests;
               }
             )
         // devFlake.checks.${system} or { }
@@ -292,14 +292,14 @@
           inherit (nixpkgsFor.${system}.native)
             changelog-d
             ;
-          default = self.packages.${system}.nix;
+          default = self.packages.${system}.zix;
           installerScriptForGHA = self.hydraJobs.installerScriptForGHA.${system};
           binaryTarball = self.hydraJobs.binaryTarball.${system};
           # TODO probably should be `nix-cli`
-          nix = self.packages.${system}.nix-everything;
-          nix-manual = nixpkgsFor.${system}.native.nixComponents.nix-manual;
-          nix-internal-api-docs = nixpkgsFor.${system}.native.nixComponents.nix-internal-api-docs;
-          nix-external-api-docs = nixpkgsFor.${system}.native.nixComponents.nix-external-api-docs;
+          zix = self.packages.${system}.nix-everything;
+          nix-manual = nixpkgsFor.${system}.native.zixComponents.nix-manual;
+          nix-internal-api-docs = nixpkgsFor.${system}.native.zixComponents.nix-internal-api-docs;
+          nix-external-api-docs = nixpkgsFor.${system}.native.zixComponents.nix-external-api-docs;
         }
         # We need to flatten recursive attribute sets of derivations to pass `flake check`.
         //
@@ -351,9 +351,9 @@
               }:
               {
                 # These attributes go right into `packages.<system>`.
-                "${pkgName}" = nixpkgsFor.${system}.native.nixComponents.${pkgName};
-                "${pkgName}-static" = nixpkgsFor.${system}.native.pkgsStatic.nixComponents.${pkgName};
-                "${pkgName}-llvm" = nixpkgsFor.${system}.native.pkgsLLVM.nixComponents.${pkgName};
+                "${pkgName}" = nixpkgsFor.${system}.native.zixComponents.${pkgName};
+                "${pkgName}-static" = nixpkgsFor.${system}.native.pkgsStatic.zixComponents.${pkgName};
+                "${pkgName}-llvm" = nixpkgsFor.${system}.native.pkgsLLVM.zixComponents.${pkgName};
               }
               // lib.optionalAttrs supportsCross (
                 flatMapAttrs (lib.genAttrs crossSystems (_: { })) (
@@ -361,7 +361,7 @@
                   { }:
                   {
                     # These attributes go right into `packages.<system>`.
-                    "${pkgName}-${crossSystem}" = nixpkgsFor.${system}.cross.${crossSystem}.nixComponents.${pkgName};
+                    "${pkgName}-${crossSystem}" = nixpkgsFor.${system}.cross.${crossSystem}.zixComponents.${pkgName};
                   }
                 )
               )
@@ -371,7 +371,7 @@
                 {
                   # These attributes go right into `packages.<system>`.
                   "${pkgName}-${stdenvName}" =
-                    nixpkgsFor.${system}.nativeForStdenv.${stdenvName}.nixComponents.${pkgName};
+                    nixpkgsFor.${system}.nativeForStdenv.${stdenvName}.zixComponents.${pkgName};
                 }
               )
             )
@@ -381,10 +381,10 @@
               pkgs = nixpkgsFor.${system}.native;
               image = import ./docker.nix {
                 inherit pkgs;
-                tag = pkgs.nix.version;
+                tag = pkgs.zix.version;
               };
             in
-            pkgs.runCommand "docker-image-tarball-${pkgs.nix.version}"
+            pkgs.runCommand "docker-image-tarball-${pkgs.zix.version}"
               { meta.description = "Docker image with Nix for ${system}"; }
               ''
                 mkdir -p $out/nix-support

@@ -87,7 +87,7 @@ TEST_F(nix_api_store_test, get_version)
     std::string str;
     auto ret = nix_store_get_version(ctx, store, OBSERVE_STRING(str));
     ASSERT_EQ(NIX_OK, ret);
-    ASSERT_STREQ(PACKAGE_VERSION, str.c_str());
+    ASSERT_STREQ(PACKAGE_VERSION_NIX, str.c_str());
 }
 
 TEST_F(nix_api_util_context, nix_store_open_dummy)

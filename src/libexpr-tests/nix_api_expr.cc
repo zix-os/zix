@@ -57,7 +57,7 @@ TEST_F(nix_api_expr_test, nix_expr_eval_from_string)
     std::string result;
     nix_get_string(nullptr, value, OBSERVE_STRING(result));
 
-    ASSERT_STREQ(PACKAGE_VERSION, result.c_str());
+    ASSERT_STREQ(PACKAGE_VERSION_NIX, result.c_str());
 }
 
 TEST_F(nix_api_expr_test, nix_expr_eval_add_numbers)

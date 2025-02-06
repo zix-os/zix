@@ -1,4 +1,4 @@
-Zix <nix version>
+Zix <zix version> (Nix <nix version>)
 Type :? for help.
 
 nix-repl> :doc import ./doc-comment-function.nix

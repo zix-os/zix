@@ -1,4 +1,4 @@
-Zix <nix version>
+Zix <zix version> (Nix <nix version>)
 Type :? for help.
 
 nix-repl> :l doc-comments.nix

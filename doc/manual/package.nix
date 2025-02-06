@@ -15,6 +15,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -22,14 +23,19 @@ let
 in
 
 mkMesonDerivation (finalAttrs: {
-  pname = "nix-manual";
+  pname = "zix-manual";
   inherit version;
+
+  passthru = {
+    inherit nixVersion;
+  };
 
   workDir = ./.;
   fileset =
     fileset.difference
       (fileset.unions [
         ../../.version
+        ../../.zix-version
         # Too many different types of files to filter for now
         ../../doc/manual
         ./.
@@ -61,7 +67,10 @@ mkMesonDerivation (finalAttrs: {
 
   preConfigure = ''
     chmod u+w ./.version
-    echo ${finalAttrs.version} > ./.version
+    echo ${finalAttrs.passthru.nixVersion.version} > ./.version
+
+    chmod u+w ./.zix-version
+    echo ${finalAttrs.version} > ./.zix-version
   '';
 
   postInstall = ''

@@ -14,6 +14,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
   resolvePath,
 }:
 
@@ -22,7 +23,7 @@ let
 in
 
 mkMesonExecutable (finalAttrs: {
-  pname = "nix-fetchers-tests";
+  pname = "zix-fetchers-tests";
   inherit version;
 
   workDir = ./.;
@@ -31,6 +32,8 @@ mkMesonExecutable (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./meson.build
     # ./meson.options
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
@@ -49,7 +52,10 @@ mkMesonExecutable (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   mesonFlags = [
@@ -78,7 +84,7 @@ mkMesonExecutable (finalAttrs: {
 
   meta = {
     platforms = lib.platforms.unix ++ lib.platforms.windows;
-    mainProgram = finalAttrs.pname + stdenv.hostPlatform.extensions.executable;
+    mainProgram = "nix-fetchers-tests${stdenv.hostPlatform.extensions.executable}";
   };
 
 })

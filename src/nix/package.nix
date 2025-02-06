@@ -10,6 +10,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -17,7 +18,7 @@ let
 in
 
 mkMesonExecutable (finalAttrs: {
-  pname = "nix";
+  pname = "zix";
   inherit version;
 
   workDir = ./.;
@@ -27,6 +28,8 @@ mkMesonExecutable (finalAttrs: {
       ./nix-meson-build-support
       ../../.version
       ./.version
+      ../../.zix-version
+      ./.zix-version
       ./meson.build
       ./meson.options
 
@@ -96,7 +99,10 @@ mkMesonExecutable (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../../.version
+      echo ${nixVersion.version} > ../../../.version
+
+      chmod u+w ./.zix-version
+      echo ${nixVersion.version} > ../../../.zix-version
     '';
 
   mesonFlags = [

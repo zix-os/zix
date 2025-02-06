@@ -4829,6 +4829,19 @@ void EvalState::createBaseEnv()
         )",
     });
 
+    v.mkString(zixVersion);
+    addConstant("__zixVersion", v, {
+        .type = nString,
+        .doc = R"(
+          The version of Zix.
+
+          ```nix-repl
+          nix-repl> builtins.zixVersion
+          "0.1.0"
+          ```
+        )",
+    });
+
     v.mkString(store->storeDir);
     addConstant("__storeDir", v, {
         .type = nString,

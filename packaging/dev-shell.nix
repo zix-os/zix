@@ -6,11 +6,11 @@
 
 { pkgs }:
 
-pkgs.nixComponents.nix-util.overrideAttrs (
+pkgs.zixComponents.nix-util.overrideAttrs (
   attrs:
 
   let
-    stdenv = pkgs.nixDependencies.stdenv;
+    stdenv = pkgs.zixDependencies.stdenv;
     buildCanExecuteHost = stdenv.buildPlatform.canExecute stdenv.hostPlatform;
     modular = devFlake.getSystem stdenv.buildPlatform.system;
     transformFlag =
@@ -75,8 +75,8 @@ pkgs.nixComponents.nix-util.overrideAttrs (
     env = {
       # Needed for Meson to find Boost.
       # https://github.com/NixOS/nixpkgs/issues/86131.
-      BOOST_INCLUDEDIR = "${lib.getDev pkgs.nixDependencies.boost}/include";
-      BOOST_LIBRARYDIR = "${lib.getLib pkgs.nixDependencies.boost}/lib";
+      BOOST_INCLUDEDIR = "${lib.getDev pkgs.zixDependencies.boost}/include";
+      BOOST_LIBRARYDIR = "${lib.getLib pkgs.zixDependencies.boost}/lib";
       # For `make format`, to work without installing pre-commit
       _NIX_PRE_COMMIT_HOOKS_CONFIG = "${(pkgs.formats.yaml { }).generate "pre-commit-config.yaml"
         modular.pre-commit.settings.rawConfig
@@ -84,26 +84,26 @@ pkgs.nixComponents.nix-util.overrideAttrs (
     };
 
     mesonFlags =
-      map (transformFlag "libutil") (ignoreCrossFile pkgs.nixComponents.nix-util.mesonFlags)
-      ++ map (transformFlag "libstore") (ignoreCrossFile pkgs.nixComponents.nix-store.mesonFlags)
-      ++ map (transformFlag "libfetchers") (ignoreCrossFile pkgs.nixComponents.nix-fetchers.mesonFlags)
+      map (transformFlag "libutil") (ignoreCrossFile pkgs.zixComponents.nix-util.mesonFlags)
+      ++ map (transformFlag "libstore") (ignoreCrossFile pkgs.zixComponents.nix-store.mesonFlags)
+      ++ map (transformFlag "libfetchers") (ignoreCrossFile pkgs.zixComponents.nix-fetchers.mesonFlags)
       ++ lib.optionals havePerl (
-        map (transformFlag "perl") (ignoreCrossFile pkgs.nixComponents.nix-perl-bindings.mesonFlags)
+        map (transformFlag "perl") (ignoreCrossFile pkgs.zixComponents.nix-perl-bindings.mesonFlags)
       )
-      ++ map (transformFlag "libexpr") (ignoreCrossFile pkgs.nixComponents.nix-expr.mesonFlags)
-      ++ map (transformFlag "libcmd") (ignoreCrossFile pkgs.nixComponents.nix-cmd.mesonFlags);
+      ++ map (transformFlag "libexpr") (ignoreCrossFile pkgs.zixComponents.nix-expr.mesonFlags)
+      ++ map (transformFlag "libcmd") (ignoreCrossFile pkgs.zixComponents.nix-cmd.mesonFlags);
 
     nativeBuildInputs =
       attrs.nativeBuildInputs or [ ]
-      ++ pkgs.nixComponents.nix-util.nativeBuildInputs
-      ++ pkgs.nixComponents.nix-store.nativeBuildInputs
-      ++ pkgs.nixComponents.nix-fetchers.nativeBuildInputs
-      ++ pkgs.nixComponents.nix-expr.nativeBuildInputs
-      ++ lib.optionals havePerl pkgs.nixComponents.nix-perl-bindings.nativeBuildInputs
-      ++ lib.optionals buildCanExecuteHost pkgs.nixComponents.nix-manual.externalNativeBuildInputs
-      ++ pkgs.nixComponents.nix-internal-api-docs.nativeBuildInputs
-      ++ pkgs.nixComponents.nix-external-api-docs.nativeBuildInputs
-      ++ pkgs.nixComponents.nix-functional-tests.externalNativeBuildInputs
+      ++ pkgs.zixComponents.nix-util.nativeBuildInputs
+      ++ pkgs.zixComponents.nix-store.nativeBuildInputs
+      ++ pkgs.zixComponents.nix-fetchers.nativeBuildInputs
+      ++ pkgs.zixComponents.nix-expr.nativeBuildInputs
+      ++ lib.optionals havePerl pkgs.zixComponents.nix-perl-bindings.nativeBuildInputs
+      ++ lib.optionals buildCanExecuteHost pkgs.zixComponents.nix-manual.externalNativeBuildInputs
+      ++ pkgs.zixComponents.nix-internal-api-docs.nativeBuildInputs
+      ++ pkgs.zixComponents.nix-external-api-docs.nativeBuildInputs
+      ++ pkgs.zixComponents.nix-functional-tests.externalNativeBuildInputs
       ++ lib.optional (
         !buildCanExecuteHost
         # Hack around https://github.com/nixos/nixpkgs/commit/bf7ad8cfbfa102a90463433e2c5027573b462479
@@ -128,14 +128,14 @@ pkgs.nixComponents.nix-util.overrideAttrs (
 
     buildInputs =
       attrs.buildInputs or [ ]
-      ++ pkgs.nixComponents.nix-util.buildInputs
-      ++ pkgs.nixComponents.nix-store.buildInputs
-      ++ pkgs.nixComponents.nix-store-tests.externalBuildInputs
-      ++ pkgs.nixComponents.nix-fetchers.buildInputs
-      ++ pkgs.nixComponents.nix-expr.buildInputs
-      ++ pkgs.nixComponents.nix-expr.externalPropagatedBuildInputs
-      ++ pkgs.nixComponents.nix-cmd.buildInputs
-      ++ lib.optionals havePerl pkgs.nixComponents.nix-perl-bindings.externalBuildInputs
+      ++ pkgs.zixComponents.nix-util.buildInputs
+      ++ pkgs.zixComponents.nix-store.buildInputs
+      ++ pkgs.zixComponents.nix-store-tests.externalBuildInputs
+      ++ pkgs.zixComponents.nix-fetchers.buildInputs
+      ++ pkgs.zixComponents.nix-expr.buildInputs
+      ++ pkgs.zixComponents.nix-expr.externalPropagatedBuildInputs
+      ++ pkgs.zixComponents.nix-cmd.buildInputs
+      ++ lib.optionals havePerl pkgs.zixComponents.nix-perl-bindings.externalBuildInputs
       ++ lib.optional havePerl pkgs.perl;
   }
 )

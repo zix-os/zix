@@ -1,5 +1,5 @@
 project('nix-store-tests', 'cpp',
-  version : files('.version'),
+  version : files('.zix-version'),
   default_options : [
     'cpp_std=c++2a',
     # TODO(Qyriad): increase the warning level

@@ -19,14 +19,14 @@ let
 
   testNixVersions =
     pkgs: daemon:
-    pkgs.nixComponents.nix-functional-tests.override {
-      pname = "nix-daemon-compat-tests";
-      version = "${pkgs.nix.version}-with-daemon-${daemon.version}";
+    pkgs.zixComponents.nix-functional-tests.override {
+      pname = "zix-daemon-compat-tests";
+      version = "${pkgs.zix.version}-with-daemon-${daemon.version}";
 
       test-daemon = daemon;
     };
 
-  # Technically we could just return `pkgs.nixComponents`, but for Hydra it's
+  # Technically we could just return `pkgs.zixComponents`, but for Hydra it's
   # convention to transpose it, and to transpose it efficiently, we need to
   # enumerate them manually, so that we don't evaluate unnecessary package sets.
   forAllPackages = lib.genAttrs [
@@ -57,7 +57,7 @@ in
 {
   # Binary package for various platforms.
   build = forAllPackages (
-    pkgName: forAllSystems (system: nixpkgsFor.${system}.native.nixComponents.${pkgName})
+    pkgName: forAllSystems (system: nixpkgsFor.${system}.native.zixComponents.${pkgName})
   );
 
   shellInputs = removeAttrs (forAllSystems (
@@ -67,7 +67,7 @@ in
   buildStatic = forAllPackages (
     pkgName:
     lib.genAttrs linux64BitSystems (
-      system: nixpkgsFor.${system}.native.pkgsStatic.nixComponents.${pkgName}
+      system: nixpkgsFor.${system}.native.pkgsStatic.zixComponents.${pkgName}
     )
   );
 
@@ -75,7 +75,7 @@ in
     pkgName:
     # Hack to avoid non-evaling package
     (
-      if pkgName == "nix-functional-tests" then
+      if pkgName == "nix-functional-tests" || pkgName == "zix-functional-tests" then
         lib.flip builtins.removeAttrs [ "x86_64-w64-mingw32" ]
       else
         lib.id
@@ -84,7 +84,7 @@ in
         forAllCrossSystems (
           crossSystem:
           lib.genAttrs [ "x86_64-linux" ] (
-            system: nixpkgsFor.${system}.cross.${crossSystem}.nixComponents.${pkgName}
+            system: nixpkgsFor.${system}.cross.${crossSystem}.zixComponents.${pkgName}
           )
         )
       )
@@ -94,7 +94,7 @@ in
     let
       components = forAllSystems (
         system:
-        nixpkgsFor.${system}.native.nixComponents.overrideScope (
+        nixpkgsFor.${system}.native.zixComponents.overrideScope (
           self: super: {
             nix-expr = super.nix-expr.override { enableGC = false; };
           }
@@ -103,7 +103,7 @@ in
     in
     forAllPackages (pkgName: forAllSystems (system: components.${system}.${pkgName}));
 
-  buildNoTests = forAllSystems (system: nixpkgsFor.${system}.native.nixComponents.nix-cli);
+  buildNoTests = forAllSystems (system: nixpkgsFor.${system}.native.zixComponents.nix-cli);
 
   # Toggles some settings for better coverage. Windows needs these
   # library combinations, and Debian build Nix with GNU readline too.
@@ -111,7 +111,7 @@ in
     let
       components = forAllSystems (
         system:
-        nixpkgsFor.${system}.native.nixComponents.overrideScope (
+        nixpkgsFor.${system}.native.zixComponents.overrideScope (
           self: super: {
             nix-cmd = super.nix-cmd.override {
               enableMarkdown = false;
@@ -124,7 +124,7 @@ in
     forAllPackages (pkgName: forAllSystems (system: components.${system}.${pkgName}));
 
   # Perl bindings for various platforms.
-  perlBindings = forAllSystems (system: nixpkgsFor.${system}.native.nixComponents.nix-perl-bindings);
+  perlBindings = forAllSystems (system: nixpkgsFor.${system}.native.zixComponents.nix-perl-bindings);
 
   # Binary tarball for various platforms, containing a Nix store
   # with the closure of 'nix' package, and the second half of
@@ -169,18 +169,18 @@ in
 
   # # Line coverage analysis.
   # coverage = nixpkgsFor.x86_64-linux.native.nix.override {
-  #   pname = "nix-coverage";
+  #   pname = "zix-coverage";
   #   withCoverageChecks = true;
   # };
 
   # Nix's manual
-  manual = nixpkgsFor.x86_64-linux.native.nixComponents.nix-manual;
+  manual = nixpkgsFor.x86_64-linux.native.zixComponents.nix-manual;
 
   # API docs for Nix's unstable internal C++ interfaces.
-  internal-api-docs = nixpkgsFor.x86_64-linux.native.nixComponents.nix-internal-api-docs;
+  internal-api-docs = nixpkgsFor.x86_64-linux.native.zixComponents.nix-internal-api-docs;
 
   # API docs for Nix's C bindings.
-  external-api-docs = nixpkgsFor.x86_64-linux.native.nixComponents.nix-external-api-docs;
+  external-api-docs = nixpkgsFor.x86_64-linux.native.zixComponents.nix-external-api-docs;
 
   # System tests.
   tests =

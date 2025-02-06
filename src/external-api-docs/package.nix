@@ -7,6 +7,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -14,7 +15,7 @@ let
 in
 
 mkMesonDerivation (finalAttrs: {
-  pname = "nix-external-api-docs";
+  pname = "zix-external-api-docs";
   inherit version;
 
   workDir = ./.;
@@ -25,6 +26,8 @@ mkMesonDerivation (finalAttrs: {
     fileset.unions [
       ./.version
       ../../.version
+      ./.zix-version
+      ../../.zix-version
       ./meson.build
       ./doxygen.cfg.in
       ./README.md
@@ -42,7 +45,10 @@ mkMesonDerivation (finalAttrs: {
 
   preConfigure = ''
     chmod u+w ./.version
-    echo ${finalAttrs.version} > ./.version
+    echo ${finalAttrs.passthru.nixVersion.version} > ./.version
+
+    chmod u+w ./.zix-version
+    echo ${finalAttrs.version} > ./.zix-version
   '';
 
   postInstall = ''

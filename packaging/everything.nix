@@ -69,8 +69,8 @@ let
       };
 
   dev = stdenv.mkDerivation (finalAttrs: {
-    name = "nix-${nix-cli.version}-dev";
-    pname = "nix";
+    name = "zix-${nix-cli.version}-dev";
+    pname = "zix";
     version = nix-cli.version;
     dontUnpack = true;
     dontBuild = true;
@@ -111,7 +111,7 @@ let
     };
   });
   devdoc = buildEnv {
-    name = "nix-${nix-cli.version}-devdoc";
+    name = "zix-${nix-cli.version}-devdoc";
     paths = [
       nix-internal-api-docs
       nix-external-api-docs
@@ -120,7 +120,7 @@ let
 
 in
 (buildEnv {
-  name = "nix-${nix-cli.version}";
+  name = "zix-${nix-cli.version}";
   paths = [
     nix-cli
     nix-manual.man

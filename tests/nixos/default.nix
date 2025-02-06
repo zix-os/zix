@@ -31,7 +31,7 @@ let
         nixpkgs.pkgs = nixpkgsFor.${system}.native;
         nix.checkAllErrors = false;
         # TODO: decide which packaging stage to use. `nix-cli` is efficient, but not the same as the user-facing `everything.nix` package (`default`). Perhaps a good compromise is `everything.nix` + `noTests` defined above?
-        nix.package = nixpkgsFor.${system}.native.nixComponents.nix-cli;
+        nix.package = nixpkgsFor.${system}.native.zixComponents.nix-cli;
 
         # Evaluate VMs faster
         documentation.enable = false;
@@ -51,11 +51,11 @@ let
           imports = [ test ];
           defaults.nixpkgs.overlays = [
             (curr: prev: {
-              nix =
+              zix =
                 let
                   packages = (builtins.getFlake "nix/${nixVersion}").packages.${system};
                 in
-                packages.nix-cli or packages.nix;
+                packages.nix-cli or packages.zix;
             })
           ];
         };

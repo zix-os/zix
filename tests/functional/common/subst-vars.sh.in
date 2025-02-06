@@ -11,7 +11,8 @@ coreutils=@coreutils@
 dot=@dot@
 busybox="@sandbox_shell@"
 
-version=@PACKAGE_VERSION@
+version=@PACKAGE_VERSION_ZIX@
+nixVersion=@PACKAGE_VERSION_NIX@
 system=@system@
 
 fi

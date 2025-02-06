@@ -1,5 +1,5 @@
 project('nix-expr-c', 'cpp',
-  version : files('.version'),
+  version : files('.zix-version'),
   default_options : [
     'cpp_std=c++2a',
     # TODO(Qyriad): increase the warning level
@@ -9,6 +9,8 @@ project('nix-expr-c', 'cpp',
   meson_version : '>= 1.1',
   license : 'LGPL-2.1-or-later',
 )
+
+fs = import('fs')
 
 cxx = meson.get_compiler('cpp')
 
@@ -28,7 +30,8 @@ deps_public_maybe_subproject = [
 subdir('nix-meson-build-support/subprojects')
 
 # TODO rename, because it will conflict with downstream projects
-configdata.set_quoted('PACKAGE_VERSION', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_ZIX', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_NIX', fs.read('.version').strip().split('\n')[0])
 
 config_h = configure_file(
   configuration : configdata,
