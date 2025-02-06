@@ -7,6 +7,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -14,8 +15,12 @@ let
 in
 
 mkMesonDerivation (finalAttrs: {
-  pname = "nix-internal-api-docs";
+  pname = "zix-internal-api-docs";
   inherit version;
+
+  passthru = {
+    inherit nixVersion;
+  };
 
   workDir = ./.;
   fileset =
@@ -25,6 +30,8 @@ mkMesonDerivation (finalAttrs: {
     fileset.unions [
       ./.version
       ../../.version
+      ./.zix-version
+      ../../.zix-version
       ./meson.build
       ./doxygen.cfg.in
       # Source is not compiled, but still must be available for Doxygen
@@ -38,7 +45,10 @@ mkMesonDerivation (finalAttrs: {
 
   preConfigure = ''
     chmod u+w ./.version
-    echo ${finalAttrs.version} > ./.version
+    echo ${finalAttrs.passthru.nixVersion.version} > ./.version
+
+    chmod u+w ./.zix-version
+    echo ${finalAttrs.version} > ./.zix-version
   '';
 
   postInstall = ''

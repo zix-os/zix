@@ -1,5 +1,5 @@
 project('nix-store', 'cpp',
-  version : files('.version'),
+  version : files('.zix-version'),
   default_options : [
     'cpp_std=c++2a',
     # TODO(Qyriad): increase the warning level
@@ -11,6 +11,8 @@ project('nix-store', 'cpp',
   license : 'LGPL-2.1-or-later',
 )
 
+fs = import('fs')
+
 cxx = meson.get_compiler('cpp')
 
 subdir('nix-meson-build-support/deps-lists')
@@ -18,7 +20,8 @@ subdir('nix-meson-build-support/deps-lists')
 configdata = configuration_data()
 
 # TODO rename, because it will conflict with downstream projects
-configdata.set_quoted('PACKAGE_VERSION', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_ZIX', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_NIX', fs.read('.version').strip().split('\n')[0])
 
 configdata.set_quoted('SYSTEM', host_machine.cpu_family() + '-' + host_machine.system())
 

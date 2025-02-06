@@ -13,6 +13,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -20,7 +21,7 @@ let
 in
 
 mkMesonLibrary (finalAttrs: {
-  pname = "nix-util";
+  pname = "zix-util";
   inherit version;
 
   workDir = ./.;
@@ -29,6 +30,8 @@ mkMesonLibrary (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./widecharwidth
     ./meson.build
     ./meson.options
@@ -60,7 +63,10 @@ mkMesonLibrary (finalAttrs: {
     # before tagging, and restore after.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   mesonFlags = [

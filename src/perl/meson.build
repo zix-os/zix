@@ -5,9 +5,9 @@
 # init project
 #============================================================================
 project (
-  'nix-perl',
+  'zix-perl',
   'cpp',
-  version : files('.version'),
+  version : files('.zix-version'),
   meson_version : '>= 1.1',
   license : 'LGPL-2.1-or-later',
 )
@@ -17,7 +17,8 @@ project (
 fs = import('fs')
 cpp = meson.get_compiler('cpp')
 nix_perl_conf = configuration_data()
-nix_perl_conf.set('PACKAGE_VERSION', meson.project_version())
+nix_perl_conf.set('PACKAGE_VERSION_ZIX', meson.project_version())
+nix_perl_conf.set('PACKAGE_VERSION_NIX', fs.read('.version').strip().split('\n')[0])
 
 
 # set error arguments

@@ -48,7 +48,7 @@ TEST_F(nix_api_util_context, nix_set_err_msg)
 
 TEST(nix_api_util, nix_version_get)
 {
-    ASSERT_EQ(std::string(nix_version_get()), PACKAGE_VERSION);
+    ASSERT_EQ(std::string(nix_version_get()), PACKAGE_VERSION_NIX);
 }
 
 struct MySettings : nix::Config

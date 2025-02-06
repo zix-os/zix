@@ -261,6 +261,7 @@ badDiff=0
 badExitCode=0
 
 nixVersion="$(nix eval --impure --raw --expr 'builtins.nixVersion' --extra-experimental-features nix-command)"
+zixVersion="$(nix eval --impure --raw --expr 'builtins.zixVersion' --extra-experimental-features nix-command)"
 
 # TODO: write a repl interacter for testing. Papering over the differences between readline / editline and between platforms is a pain.
 
@@ -301,6 +302,7 @@ runRepl () {
       -e "s@$testDir@/path/to/tests/functional@g" \
       -e "s@$testDirNoUnderscores@/path/to/tests/functional@g" \
       -e "s@$nixVersion@<nix version>@g" \
+      -e "s@$zixVersion@<zix version>@g" \
       -e "s@Added [0-9]* variables@Added <number omitted> variables@g" \
     | grep -vF $'warning: you don\'t have Internet access; disabling some network-dependent features' \
     ;

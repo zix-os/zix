@@ -18,6 +18,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 
   # Whether to use garbage collection for the Nix language evaluator.
   #
@@ -36,7 +37,7 @@ let
 in
 
 mkMesonLibrary (finalAttrs: {
-  pname = "nix-expr";
+  pname = "zix-expr";
   inherit version;
 
   workDir = ./.;
@@ -45,6 +46,8 @@ mkMesonLibrary (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./meson.build
     ./meson.options
     ./primops/meson.build
@@ -82,7 +85,10 @@ mkMesonLibrary (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   mesonFlags = [

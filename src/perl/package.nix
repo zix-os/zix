@@ -7,6 +7,7 @@
   perlPackages,
   nix-store,
   version,
+  nixVersion,
   curl,
   bzip2,
   libsodium,
@@ -18,14 +19,20 @@ in
 
 perl.pkgs.toPerlModule (
   mkMesonDerivation (finalAttrs: {
-    pname = "nix-perl";
+    pname = "zix-perl";
     inherit version;
+
+    passthru = {
+      inherit nixVersion;
+    };
 
     workDir = ./.;
     fileset = fileset.unions (
       [
         ./.version
         ../../.version
+        ./.zix-version
+        ../../.zix-version
         ./MANIFEST
         ./lib
         ./meson.build
@@ -64,7 +71,10 @@ perl.pkgs.toPerlModule (
       # "Inline" .version so its not a symlink, and includes the suffix
       ''
         chmod u+w .version
-        echo ${finalAttrs.version} > .version
+        echo ${finalAttrs.passthru.nixVersion.version} > .version
+
+        chmod u+w .zix-version
+        echo ${finalAttrs.version} > .zix-version
       '';
 
     mesonFlags = [

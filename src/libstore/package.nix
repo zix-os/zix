@@ -19,6 +19,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 
   embeddedSandboxShell ? stdenv.hostPlatform.isStatic,
 }:
@@ -28,7 +29,7 @@ let
 in
 
 mkMesonLibrary (finalAttrs: {
-  pname = "nix-store";
+  pname = "zix-store";
   inherit version;
 
   workDir = ./.;
@@ -37,6 +38,8 @@ mkMesonLibrary (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./meson.build
     ./meson.options
     ./linux/meson.build
@@ -74,7 +77,10 @@ mkMesonLibrary (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   mesonFlags =

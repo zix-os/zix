@@ -10,6 +10,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 }:
 
 let
@@ -17,7 +18,7 @@ let
 in
 
 mkMesonLibrary (finalAttrs: {
-  pname = "nix-fetchers";
+  pname = "zix-fetchers";
   inherit version;
 
   workDir = ./.;
@@ -26,6 +27,8 @@ mkMesonLibrary (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./meson.build
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
     (fileset.fileFilter (file: file.hasExt "hh") ./.)
@@ -46,7 +49,10 @@ mkMesonLibrary (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   meta = {

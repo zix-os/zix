@@ -1,13 +1,13 @@
 {
   lib,
   runCommand,
-  nix,
+  zix,
   tarballs,
 }:
 
 runCommand "installer-script"
   {
-    buildInputs = [ nix ];
+    buildInputs = [ zix ];
   }
   ''
     mkdir -p $out/nix-support
@@ -36,7 +36,7 @@ runCommand "installer-script"
                    --replace '@tarballPath_${system}@' $(tarballPath ${tarball}/*.tar.xz) \
           ''
         ) tarballs
-      } --replace '@nixVersion@' ${nix.version}
+      } --replace '@nixVersion@' ${zix.version}
 
     echo "file installer $out/install" >> $out/nix-support/hydra-build-products
   ''

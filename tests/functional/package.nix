@@ -20,8 +20,9 @@
 
   # Configuration Options
 
-  pname ? "nix-functional-tests",
+  pname ? "zix-functional-tests",
   version,
+  nixVersion,
 
   # For running the functional tests against a different pre-built Nix.
   test-daemon ? null,
@@ -40,6 +41,7 @@ mkMesonDerivation (
     fileset = fileset.unions [
       ../../scripts/nix-profile.sh.in
       ../../.version
+      ../../.zix-version
       ../../tests/functional
       ./.
     ];
@@ -79,7 +81,10 @@ mkMesonDerivation (
       # Do the meson utils, without modification.
       ''
         chmod u+w ./.version
-        echo ${version} > ../../../.version
+        echo ${nixVersion.version} > ../../../.version
+
+        chmod u+w ./.zix-version
+        echo ${version} > ../../../.zix-version
       ''
       # TEMP hack for Meson before make is gone, where
       # `src/nix-functional-tests` is during the transition a symlink and

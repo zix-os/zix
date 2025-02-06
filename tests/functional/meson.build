@@ -1,5 +1,5 @@
 project('nix-functional-tests',
-  version : files('.version'),
+  version : files('.zix-version'),
   default_options : [
     'cpp_std=c++2a',
     # TODO(Qyriad): increase the warning level
@@ -29,7 +29,8 @@ test_confdata = {
   'dot': dot.found() ? dot.full_path() : '',
   'bash': bash.full_path(),
   'sandbox_shell': busybox.found() ? busybox.full_path() : '',
-  'PACKAGE_VERSION': meson.project_version(),
+  'PACKAGE_VERSION_ZIX': meson.project_version(),
+  'PACKAGE_VERSION_NIX': fs.read('.version').strip().split('\n')[0],
   'system': host_machine.cpu_family() + '-' + host_machine.system(),
 }
 

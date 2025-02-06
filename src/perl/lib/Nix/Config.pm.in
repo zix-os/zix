@@ -3,7 +3,8 @@ package Nix::Config;
 use MIME::Base64;
 use Nix::Store;
 
-$version = "@PACKAGE_VERSION@";
+$version = "@PACKAGE_VERSION_NIX@";
+$zixVersion = "@PACKAGE_VERSION_ZIX@";
 
 $storeDir = Nix::Store::getStoreDir;
 

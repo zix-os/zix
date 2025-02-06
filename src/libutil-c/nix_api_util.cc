@@ -65,7 +65,7 @@ void nix_clear_err(nix_c_context * context)
 
 const char * nix_version_get()
 {
-    return PACKAGE_VERSION;
+    return PACKAGE_VERSION_NIX;
 }
 
 // Implementations

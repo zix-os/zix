@@ -17,6 +17,7 @@
   # Configuration Options
 
   version,
+  nixVersion,
 
   # Whether to enable Markdown rendering in the Nix binary.
   enableMarkdown ? !stdenv.hostPlatform.isWindows,
@@ -35,7 +36,7 @@ let
 in
 
 mkMesonLibrary (finalAttrs: {
-  pname = "nix-cmd";
+  pname = "zix-cmd";
   inherit version;
 
   workDir = ./.;
@@ -44,6 +45,8 @@ mkMesonLibrary (finalAttrs: {
     ./nix-meson-build-support
     ../../.version
     ./.version
+    ../../.zix-version
+    ./.zix-version
     ./meson.build
     ./meson.options
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
@@ -69,7 +72,10 @@ mkMesonLibrary (finalAttrs: {
     # Do the meson utils, without modification.
     ''
       chmod u+w ./.version
-      echo ${version} > ../../.version
+      echo ${nixVersion.version} > ../../.version
+
+      chmod u+w ./.zix-version
+      echo ${version} > ../../.zix-version
     '';
 
   mesonFlags = [

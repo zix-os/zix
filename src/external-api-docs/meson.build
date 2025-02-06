@@ -1,5 +1,5 @@
 project('nix-external-api-docs',
-  version : files('.version'),
+  version : files('.zix-version'),
   meson_version : '>= 1.1',
   license : 'LGPL-2.1-or-later',
 )

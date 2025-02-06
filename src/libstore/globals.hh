@@ -1253,6 +1253,7 @@ void loadConfFile(AbstractConfig & config);
 // Used by the Settings constructor
 std::vector<Path> getUserConfigFiles();
 
+extern const std::string zixVersion;
 extern const std::string nixVersion;
 
 /**

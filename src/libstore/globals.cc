@@ -243,7 +243,8 @@ Path Settings::getDefaultSSLCertFile()
     return "";
 }
 
-const std::string nixVersion = PACKAGE_VERSION;
+const std::string zixVersion = PACKAGE_VERSION_ZIX;
+const std::string nixVersion = PACKAGE_VERSION_NIX;
 
 NLOHMANN_JSON_SERIALIZE_ENUM(SandboxMode, {
     {SandboxMode::smEnabled, true},

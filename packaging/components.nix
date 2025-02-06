@@ -9,23 +9,32 @@ scope:
 let
   inherit (scope) callPackage;
 
-  baseVersion = lib.fileContents ../.version;
+  mkVersion = baseVersion:
+    rec {
+      inherit baseVersion;
 
-  versionSuffix = lib.optionalString (!officialRelease) "pre";
+      versionSuffix = lib.optionalString (!officialRelease) "pre";
 
-  fineVersionSuffix =
-    lib.optionalString (!officialRelease)
-      "pre${
-        builtins.substring 0 8 (src.lastModifiedDate or src.lastModified or "19700101")
-      }_${src.shortRev or "dirty"}";
+      fineVersionSuffix =
+        lib.optionalString (!officialRelease)
+          "pre${
+            builtins.substring 0 8 (src.lastModifiedDate or src.lastModified or "19700101")
+          }_${src.shortRev or "dirty"}";
 
-  fineVersion = baseVersion + fineVersionSuffix;
+      fineVersion = baseVersion + fineVersionSuffix;
+
+      version = baseVersion + versionSuffix;
+    };
+
+  nixVersion = mkVersion (lib.fileContents ../.version);
+  zixVersion = mkVersion (lib.fileContents ../.zix-version);
 in
 
-# This becomes the pkgs.nixComponents attribute set
+# This becomes the pkgs.zixComponents attribute set
 {
-  version = baseVersion + versionSuffix;
-  inherit versionSuffix;
+  version = with zixVersion; baseVersion + versionSuffix;
+  inherit (zixVersion) versionSuffix;
+  inherit nixVersion;
 
   nix-util = callPackage ../src/libutil/package.nix { };
   nix-util-c = callPackage ../src/libutil-c/package.nix { };
@@ -54,15 +63,15 @@ in
 
   nix-cmd = callPackage ../src/libcmd/package.nix { };
 
-  nix-cli = callPackage ../src/nix/package.nix { version = fineVersion; };
+  nix-cli = callPackage ../src/nix/package.nix { version = zixVersion.fineVersion; };
 
   nix-functional-tests = callPackage ../src/nix-functional-tests/package.nix {
-    version = fineVersion;
+    version = zixVersion.fineVersion;
   };
 
-  nix-manual = callPackage ../doc/manual/package.nix { version = fineVersion; };
-  nix-internal-api-docs = callPackage ../src/internal-api-docs/package.nix { version = fineVersion; };
-  nix-external-api-docs = callPackage ../src/external-api-docs/package.nix { version = fineVersion; };
+  nix-manual = callPackage ../doc/manual/package.nix { version = zixVersion.fineVersion; };
+  nix-internal-api-docs = callPackage ../src/internal-api-docs/package.nix { version = zixVersion.fineVersion; };
+  nix-external-api-docs = callPackage ../src/external-api-docs/package.nix { version = zixVersion.fineVersion; };
 
   nix-perl-bindings = callPackage ../src/perl/package.nix { };
 
