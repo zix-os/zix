@@ -1,4 +1,4 @@
-Nix <nix version>
+Zix <nix version>
 Type :? for help.
 
 nix-repl> :l pretty-print-idempotent.nix
