@@ -1,11 +1,6 @@
 #include <iostream>
 #include <cstring>
 
-#include <blake3.h>
-#include <openssl/crypto.h>
-#include <openssl/md5.h>
-#include <openssl/sha.h>
-
 #include "args.hh"
 #include "hash.hh"
 #include "archive.hh"
@@ -287,55 +282,26 @@ Hash newHashAllowEmpty(std::string_view hashStr, std::optional<HashAlgorithm> ha
         return Hash::parseAny(hashStr, ha);
 }
 
+struct Ctx {};
 
-union Ctx
-{
-    blake3_hasher blake3;
-    MD5_CTX md5;
-    SHA_CTX sha1;
-    SHA256_CTX sha256;
-    SHA512_CTX sha512;
-};
+extern "C" Ctx* nix_libutil_hash_create(HashAlgorithm type);
+extern "C" void nix_libutil_hash_update(Ctx* ctx, const void* data, size_t size);
+extern "C" void nix_libutil_hash_finish(Ctx* ctx, uint8_t* hash);
 
-
-static void start(HashAlgorithm ha, Ctx & ctx)
-{
-    if (ha == HashAlgorithm::BLAKE3) blake3_hasher_init(&ctx.blake3);
-    else if (ha == HashAlgorithm::MD5) MD5_Init(&ctx.md5);
-    else if (ha == HashAlgorithm::SHA1) SHA1_Init(&ctx.sha1);
-    else if (ha == HashAlgorithm::SHA256) SHA256_Init(&ctx.sha256);
-    else if (ha == HashAlgorithm::SHA512) SHA512_Init(&ctx.sha512);
-}
-
-
-static void update(HashAlgorithm ha, Ctx & ctx,
+static void update(Ctx* ctx,
                    std::string_view data)
 {
-    if (ha == HashAlgorithm::BLAKE3) blake3_hasher_update(&ctx.blake3, data.data(), data.size());
-    else if (ha == HashAlgorithm::MD5) MD5_Update(&ctx.md5, data.data(), data.size());
-    else if (ha == HashAlgorithm::SHA1) SHA1_Update(&ctx.sha1, data.data(), data.size());
-    else if (ha == HashAlgorithm::SHA256) SHA256_Update(&ctx.sha256, data.data(), data.size());
-    else if (ha == HashAlgorithm::SHA512) SHA512_Update(&ctx.sha512, data.data(), data.size());
-}
-
-
-static void finish(HashAlgorithm ha, Ctx & ctx, unsigned char * hash)
-{
-    if (ha == HashAlgorithm::BLAKE3) blake3_hasher_finalize(&ctx.blake3, hash, BLAKE3_OUT_LEN);
-    else if (ha == HashAlgorithm::MD5) MD5_Final(hash, &ctx.md5);
-    else if (ha == HashAlgorithm::SHA1) SHA1_Final(hash, &ctx.sha1);
-    else if (ha == HashAlgorithm::SHA256) SHA256_Final(hash, &ctx.sha256);
-    else if (ha == HashAlgorithm::SHA512) SHA512_Final(hash, &ctx.sha512);
+    nix_libutil_hash_update(ctx, data.data(), data.size());
 }
 
 Hash hashString(
     HashAlgorithm ha, std::string_view s, const ExperimentalFeatureSettings & xpSettings)
 {
-    Ctx ctx;
+    Ctx* ctx = nix_libutil_hash_create(ha);
     Hash hash(ha, xpSettings);
-    start(ha, ctx);
-    update(ha, ctx, s);
-    finish(ha, ctx, hash.hash);
+    update(ctx, s);
+    nix_libutil_hash_finish(ctx, &hash.hash[0]);
+    delete ctx;
     return hash;
 }
 
@@ -349,9 +315,8 @@ Hash hashFile(HashAlgorithm ha, const Path & path)
 
 HashSink::HashSink(HashAlgorithm ha) : ha(ha)
 {
-    ctx = new Ctx;
+    ctx = nix_libutil_hash_create(ha);
     bytes = 0;
-    start(ha, *ctx);
 }
 
 HashSink::~HashSink()
@@ -363,23 +328,22 @@ HashSink::~HashSink()
 void HashSink::writeUnbuffered(std::string_view data)
 {
     bytes += data.size();
-    update(ha, *ctx, data);
+    update(ctx, data);
 }
 
 HashResult HashSink::finish()
 {
     flush();
     Hash hash(ha);
-    nix::finish(ha, *ctx, hash.hash);
+    nix_libutil_hash_finish(ctx, &hash.hash[0]);
     return HashResult(hash, bytes);
 }
 
 HashResult HashSink::currentHash()
 {
     flush();
-    Ctx ctx2 = *ctx;
     Hash hash(ha);
-    nix::finish(ha, ctx2, hash.hash);
+    nix_libutil_hash_finish(ctx, &hash.hash[0]);
     return HashResult(hash, bytes);
 }
 

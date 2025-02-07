@@ -211,7 +211,7 @@ std::optional<HashAlgorithm> parseHashAlgoOpt(std::string_view s);
 std::string_view printHashAlgo(HashAlgorithm ha);
 
 
-union Ctx;
+struct Ctx;
 
 struct AbstractHashSink : virtual Sink
 {

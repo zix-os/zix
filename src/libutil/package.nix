@@ -6,10 +6,8 @@
   boost,
   brotli,
   libarchive,
-  libblake3,
   libsodium,
   nlohmann_json,
-  openssl,
 
   # Configuration Options
 
@@ -46,9 +44,7 @@ mkMesonLibrary (finalAttrs: {
 
   buildInputs = [
     brotli
-    libblake3
     libsodium
-    openssl
   ];
 
   propagatedBuildInputs = [
