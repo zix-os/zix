@@ -22,7 +22,7 @@
   inputs.git-hooks-nix.inputs.gitignore.follows = "";
   inputs.nixfmt.url = "github:NixOS/nixfmt";
   inputs.zig = {
-    url = "github:ziglang/zig?ref=pull/20511/head";
+    url = "github:ziglang/zig";
     flake = false;
   };
 
