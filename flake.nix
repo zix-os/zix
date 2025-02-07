@@ -195,19 +195,23 @@
             else
               prev.pre-commit;
 
-          zig_0_14 = (prev.zig.overrideAttrs (f: p: {
-            version = "0.14.0-git+${inputs.zig.shortRev or "dirty"}";
-            src = inputs.zig;
+          zig_0_14 =
+            (prev.zig.overrideAttrs (
+              f: p: {
+                version = "0.14.0-git+${inputs.zig.shortRev or "dirty"}";
+                src = inputs.zig;
 
-            doInstallCheck = false;
+                doInstallCheck = false;
 
-            postBuild = "";
-            postInstall = "";
+                postBuild = "";
+                postInstall = "";
 
-            outputs = [ "out" ];
-          })).override {
-            llvmPackages = final.llvmPackages_19;
-          };
+                outputs = [ "out" ];
+              }
+            )).override
+              {
+                llvmPackages = final.llvmPackages_19;
+              };
         };
 
     in
