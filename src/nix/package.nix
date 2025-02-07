@@ -11,6 +11,7 @@
 
   version,
   nixVersion,
+  zixVersion,
 }:
 
 let
@@ -19,7 +20,7 @@ in
 
 mkMesonExecutable (finalAttrs: {
   pname = "zix";
-  inherit version;
+  inherit (nixVersion) version;
 
   workDir = ./.;
   fileset = fileset.unions (
@@ -102,7 +103,7 @@ mkMesonExecutable (finalAttrs: {
       echo ${nixVersion.version} > ../../../.version
 
       chmod u+w ./.zix-version
-      echo ${nixVersion.version} > ../../../.zix-version
+      echo ${version} > ../../../.zix-version
     '';
 
   mesonFlags = [
