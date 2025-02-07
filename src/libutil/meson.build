@@ -64,12 +64,6 @@ elif host_machine.system() == 'sunos'
   deps_other += [socket, network_service_library]
 endif
 
-blake3 = dependency(
-  'libblake3',
-  version: '>= 1.5.5',
-)
-deps_private += blake3
-
 boost = dependency(
   'boost',
   modules : ['context', 'coroutine'],
@@ -78,13 +72,6 @@ boost = dependency(
 # boost is a public dependency, but not a pkg-config dependency unfortunately, so we
 # put in `deps_other`.
 deps_other += boost
-
-openssl = dependency(
-  'libcrypto',
-  'openssl',
-  version : '>= 1.1.1',
-)
-deps_private += openssl
 
 libarchive = dependency('libarchive', version : '>= 3.1.2')
 deps_public += libarchive
@@ -269,11 +256,12 @@ subdir('nix-meson-build-support/windows-version')
 
 sources += custom_target(
   'zig build-obj',
-  command: [zig, 'build-lib', '-femit-h=@OUTDIR@/libutil-zig.h', '-femit-bin=@OUTPUT@', '-ofmt=c', zig_args, '@INPUT@'],
+  command: [zig, 'build-lib', '-femit-h=@OUTDIR@/libutil-zig.h', '-femit-bin=@OUTPUT@', '-ofmt=c', '-lc', zig_args, '@INPUT@'],
   output: 'libutil-zig.c',
   input: 'libutil.zig',
   depend_files: [
-    'cpuid.zig'
+    'cpuid.zig',
+    'hash.zig',
   ],
 )
 
