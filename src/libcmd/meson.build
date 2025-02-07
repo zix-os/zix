@@ -1,4 +1,4 @@
-project('nix-cmd', 'cpp',
+project('nix-cmd', 'cpp', 'c',
   version : files('.zix-version'),
   default_options : [
     'cpp_std=c++2a',
@@ -9,6 +9,8 @@ project('nix-cmd', 'cpp',
   meson_version : '>= 1.1',
   license : 'LGPL-2.1-or-later',
 )
+
+fs = import('fs')
 
 cxx = meson.get_compiler('cpp')
 
@@ -48,6 +50,12 @@ elif readline_flavor == 'readline'
     'USE_READLINE',
     1,
     description: 'Use readline instead of editline',
+  )
+elif readline_flavor == 'zig'
+  configdata.set(
+    'USE_ZIG_REPL',
+    1,
+    description: 'Use zig implementation for repl',
   )
 else
   error('illegal editline flavor', readline_flavor)
@@ -113,10 +121,25 @@ headers = [config_h] + files(
   'repl.hh',
 )
 
+subdir('nix-meson-build-support/zig')
+
+sources += custom_target(
+  'zig build-obj',
+  command: [zig, 'build-lib', '-femit-h=@OUTDIR@/libcmd-zig.h', '-femit-bin=@OUTPUT@', '-ofmt=c', '-lc', zig_args, '@INPUT@'],
+  output: 'libcmd-zig.c',
+  input: 'libcmd.zig',
+  depend_files: [
+    'repl.zig',
+  ],
+)
+
+include_dirs += fs.parent(fs.parent(zig.full_path())) / 'lib' / 'zig'
+
 this_library = library(
   'nixcmd',
   sources,
   dependencies : deps_public + deps_private + deps_other,
+  include_directories : include_dirs,
   prelink : true, # For C++ static initializers
   install : true,
 )

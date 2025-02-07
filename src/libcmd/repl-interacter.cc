@@ -4,6 +4,9 @@
 #include <readline/history.h>
 #include <readline/readline.h>
 #else
+#ifdef USE_ZIG_REPL
+extern "C" char* readline(const char* prompt);
+#else
 // editline < 1.15.2 don't wrap their API for C++ usage
 // (added in https://github.com/troglobit/editline/commit/91398ceb3427b730995357e9d120539fb9bb7461).
 // This results in linker errors due to to name-mangling of editline C symbols.
@@ -12,6 +15,7 @@
 extern "C" {
 #include <editline.h>
 }
+#endif
 #endif
 
 #include "signals.hh"
@@ -107,20 +111,24 @@ static int listPossibleCallback(char * s, char *** avp)
 ReadlineLikeInteracter::Guard ReadlineLikeInteracter::init(detail::ReplCompleterMixin * repl)
 {
     // Allow nix-repl specific settings in .inputrc
+#ifndef USE_ZIG_REPL
     rl_readline_name = "nix-repl";
+#endif
     try {
         createDirs(dirOf(historyFile));
     } catch (SystemError & e) {
         logWarning(e.info());
     }
-#ifndef USE_READLINE
+#if !defined(USE_READLINE) && !defined(USE_ZIG_REPL)
     el_hist_size = 1000;
 #endif
+#ifndef USE_ZIG_REPL
     read_history(historyFile.c_str());
+#endif
     auto oldRepl = curRepl;
     curRepl = repl;
     Guard restoreRepl([oldRepl] { curRepl = oldRepl; });
-#ifndef USE_READLINE
+#if !defined(USE_READLINE) && !defined(USE_ZIG_REPL)
     rl_set_complete_func(completionCallback);
     rl_set_list_possib_func(listPossibleCallback);
 #endif
@@ -200,7 +208,9 @@ bool ReadlineLikeInteracter::getLine(std::string & input, ReplPromptType promptT
 
 ReadlineLikeInteracter::~ReadlineLikeInteracter()
 {
+#ifndef USE_ZIG_REPL
     write_history(historyFile.c_str());
+#endif
 }
 
 };
