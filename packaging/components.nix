@@ -9,22 +9,21 @@ scope:
 let
   inherit (scope) callPackage;
 
-  mkVersion = baseVersion:
-    rec {
-      inherit baseVersion;
+  mkVersion = baseVersion: rec {
+    inherit baseVersion;
 
-      versionSuffix = lib.optionalString (!officialRelease) "pre";
+    versionSuffix = lib.optionalString (!officialRelease) "pre";
 
-      fineVersionSuffix =
-        lib.optionalString (!officialRelease)
-          "pre${
-            builtins.substring 0 8 (src.lastModifiedDate or src.lastModified or "19700101")
-          }_${src.shortRev or "dirty"}";
+    fineVersionSuffix =
+      lib.optionalString (!officialRelease)
+        "pre${
+          builtins.substring 0 8 (src.lastModifiedDate or src.lastModified or "19700101")
+        }_${src.shortRev or "dirty"}";
 
-      fineVersion = baseVersion + fineVersionSuffix;
+    fineVersion = baseVersion + fineVersionSuffix;
 
-      version = baseVersion + versionSuffix;
-    };
+    version = baseVersion + versionSuffix;
+  };
 
   nixVersion = mkVersion (lib.fileContents ../.version);
   zixVersion = mkVersion (lib.fileContents ../.zix-version);
@@ -70,8 +69,12 @@ in
   };
 
   nix-manual = callPackage ../doc/manual/package.nix { version = zixVersion.fineVersion; };
-  nix-internal-api-docs = callPackage ../src/internal-api-docs/package.nix { version = zixVersion.fineVersion; };
-  nix-external-api-docs = callPackage ../src/external-api-docs/package.nix { version = zixVersion.fineVersion; };
+  nix-internal-api-docs = callPackage ../src/internal-api-docs/package.nix {
+    version = zixVersion.fineVersion;
+  };
+  nix-external-api-docs = callPackage ../src/external-api-docs/package.nix {
+    version = zixVersion.fineVersion;
+  };
 
   nix-perl-bindings = callPackage ../src/perl/package.nix { };
 
