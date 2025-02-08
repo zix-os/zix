@@ -28,7 +28,13 @@
   #
   # - editline (default)
   # - readline
-  readlineFlavor ? if stdenv.hostPlatform.isWindows then "readline" else "editline",
+  readlineFlavor ?
+    if stdenv.hostPlatform.isWindows then
+      "readline"
+    else if stdenv.hostPlatform.isLinux then
+      "zig"
+    else
+      "editline",
 }:
 
 let
@@ -51,10 +57,17 @@ mkMesonLibrary (finalAttrs: {
     ./meson.options
     (fileset.fileFilter (file: file.hasExt "cc") ./.)
     (fileset.fileFilter (file: file.hasExt "hh") ./.)
+    (fileset.fileFilter (file: file.hasExt "zig") ./.)
   ];
 
   buildInputs = [
-    ({ inherit editline readline; }.${readlineFlavor})
+    (
+      {
+        inherit editline readline;
+        zig = null;
+      }
+      .${readlineFlavor}
+    )
   ] ++ lib.optional enableMarkdown lowdown;
 
   propagatedBuildInputs = [
