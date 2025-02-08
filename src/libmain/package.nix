@@ -2,8 +2,6 @@
   lib,
   mkMesonLibrary,
 
-  openssl,
-
   nix-util,
   nix-store,
 
@@ -37,7 +35,6 @@ mkMesonLibrary (finalAttrs: {
   propagatedBuildInputs = [
     nix-util
     nix-store
-    openssl
   ];
 
   preConfigure =
