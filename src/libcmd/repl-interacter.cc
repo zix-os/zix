@@ -1,9 +1,5 @@
 #include <cstdio>
 
-#ifdef USE_READLINE
-#include <readline/history.h>
-#include <readline/readline.h>
-#else
 #ifdef USE_ZIG_REPL
 extern "C" char* readline(const char* prompt);
 #else
@@ -15,7 +11,6 @@ extern "C" char* readline(const char* prompt);
 extern "C" {
 #include <editline.h>
 }
-#endif
 #endif
 
 #include "signals.hh"
@@ -39,7 +34,6 @@ void sigintHandler(int signo)
 
 static detail::ReplCompleterMixin * curRepl; // ugly
 
-#ifndef USE_READLINE
 static char * completionCallback(char * s, int * match)
 {
     auto possible = curRepl->completePrefix(s);
@@ -106,7 +100,6 @@ static int listPossibleCallback(char * s, char *** avp)
 
     return ac;
 }
-#endif
 
 ReadlineLikeInteracter::Guard ReadlineLikeInteracter::init(detail::ReplCompleterMixin * repl)
 {
@@ -119,7 +112,7 @@ ReadlineLikeInteracter::Guard ReadlineLikeInteracter::init(detail::ReplCompleter
     } catch (SystemError & e) {
         logWarning(e.info());
     }
-#if !defined(USE_READLINE) && !defined(USE_ZIG_REPL)
+#ifndef USE_ZIG_REPL
     el_hist_size = 1000;
 #endif
 #ifndef USE_ZIG_REPL
@@ -128,7 +121,7 @@ ReadlineLikeInteracter::Guard ReadlineLikeInteracter::init(detail::ReplCompleter
     auto oldRepl = curRepl;
     curRepl = repl;
     Guard restoreRepl([oldRepl] { curRepl = oldRepl; });
-#if !defined(USE_READLINE) && !defined(USE_ZIG_REPL)
+#ifndef USE_ZIG_REPL
     rl_set_complete_func(completionCallback);
     rl_set_list_possib_func(listPossibleCallback);
 #endif
@@ -191,11 +184,9 @@ bool ReadlineLikeInteracter::getLine(std::string & input, ReplPromptType promptT
     // quite useful for reading the test output, so we add it here.
     if (auto e = getEnv("_NIX_TEST_REPL_ECHO"); s && e && *e == "1")
     {
-#ifndef USE_READLINE
         // This is probably not right for multi-line input, but we don't use that
         // in the characterisation tests, so it's fine.
         std::cout << promptForType(promptType) << s << std::endl;
-#endif
     }
 
     if (!s)

@@ -10,7 +10,6 @@
   nix-flake,
   nix-main,
   editline,
-  readline,
   lowdown,
   nlohmann_json,
 
@@ -28,13 +27,7 @@
   #
   # - editline (default)
   # - readline
-  readlineFlavor ?
-    if stdenv.hostPlatform.isWindows then
-      "readline"
-    else if stdenv.hostPlatform.isLinux then
-      "zig"
-    else
-      "editline",
+  readlineFlavor ? if stdenv.hostPlatform.isLinux then "zig" else "editline",
 }:
 
 let
@@ -63,7 +56,7 @@ mkMesonLibrary (finalAttrs: {
   buildInputs = [
     (
       {
-        inherit editline readline;
+        inherit editline;
         zig = null;
       }
       .${readlineFlavor}
