@@ -43,14 +43,6 @@ readline_flavor = get_option('readline-flavor')
 if readline_flavor == 'editline'
   editline = dependency('libeditline', 'editline', version : '>=1.14')
   deps_private += editline
-elif readline_flavor == 'readline'
-  readline = dependency('readline')
-  deps_private += readline
-  configdata.set(
-    'USE_READLINE',
-    1,
-    description: 'Use readline instead of editline',
-  )
 elif readline_flavor == 'zig'
   configdata.set(
     'USE_ZIG_REPL',

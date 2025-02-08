@@ -9,7 +9,7 @@ option(
 option(
   'readline-flavor',
   type : 'combo',
-  choices : ['editline', 'readline', 'zig'],
-  value : 'editline',
+  choices : ['editline', 'zig'],
+  value : 'zig',
   description : 'Which library to use for nice line editing with the Nix language REPL',
 )
