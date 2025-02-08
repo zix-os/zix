@@ -20,8 +20,6 @@
 #include <features.h>
 #endif
 
-#include <openssl/crypto.h>
-
 #include "exit.hh"
 #include "strings.hh"
 
