@@ -5,11 +5,3 @@ option(
   type: 'feature',
   description: 'Enable Markdown rendering in the Nix binary (requires lowdown)',
 )
-
-option(
-  'readline-flavor',
-  type : 'combo',
-  choices : ['editline', 'zig'],
-  value : 'zig',
-  description : 'Which library to use for nice line editing with the Nix language REPL',
-)

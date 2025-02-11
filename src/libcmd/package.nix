@@ -9,7 +9,6 @@
   nix-expr,
   nix-flake,
   nix-main,
-  editline,
   lowdown,
   nlohmann_json,
 
@@ -20,14 +19,6 @@
 
   # Whether to enable Markdown rendering in the Nix binary.
   enableMarkdown ? !stdenv.hostPlatform.isWindows,
-
-  # Which interactive line editor library to use for Nix's repl.
-  #
-  # Currently supported choices are:
-  #
-  # - editline (default)
-  # - readline
-  readlineFlavor ? if stdenv.hostPlatform.isLinux then "zig" else "editline",
 }:
 
 let
@@ -53,15 +44,7 @@ mkMesonLibrary (finalAttrs: {
     (fileset.fileFilter (file: file.hasExt "zig") ./.)
   ];
 
-  buildInputs = [
-    (
-      {
-        inherit editline;
-        zig = null;
-      }
-      .${readlineFlavor}
-    )
-  ] ++ lib.optional enableMarkdown lowdown;
+  buildInputs = lib.optional enableMarkdown lowdown;
 
   propagatedBuildInputs = [
     nix-util
@@ -86,7 +69,6 @@ mkMesonLibrary (finalAttrs: {
 
   mesonFlags = [
     (lib.mesonEnable "markdown" enableMarkdown)
-    (lib.mesonOption "readline-flavor" readlineFlavor)
   ];
 
   meta = {
