@@ -115,7 +115,6 @@ in
           self: super: {
             nix-cmd = super.nix-cmd.override {
               enableMarkdown = false;
-              readlineFlavor = "readline";
             };
           }
         )

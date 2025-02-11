@@ -39,20 +39,6 @@ configdata.set('HAVE_LOWDOWN', lowdown.found().to_int())
 # The API changed slightly around terminal initialization.
 configdata.set('HAVE_LOWDOWN_1_4', lowdown.version().version_compare('>= 1.4.0').to_int())
 
-readline_flavor = get_option('readline-flavor')
-if readline_flavor == 'editline'
-  editline = dependency('libeditline', 'editline', version : '>=1.14')
-  deps_private += editline
-elif readline_flavor == 'zig'
-  configdata.set(
-    'USE_ZIG_REPL',
-    1,
-    description: 'Use zig implementation for repl',
-  )
-else
-  error('illegal editline flavor', readline_flavor)
-endif
-
 config_h = configure_file(
   configuration : configdata,
   output : 'config-cmd.hh',

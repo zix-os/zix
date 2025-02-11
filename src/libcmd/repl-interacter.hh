@@ -42,7 +42,6 @@ public:
     }
     virtual Guard init(detail::ReplCompleterMixin * repl) override;
     virtual bool getLine(std::string & input, ReplPromptType promptType) override;
-    virtual ~ReadlineLikeInteracter() override;
 };
 
 };
