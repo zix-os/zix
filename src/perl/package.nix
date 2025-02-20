@@ -20,11 +20,7 @@ in
 perl.pkgs.toPerlModule (
   mkMesonDerivation (finalAttrs: {
     pname = "zix-perl";
-    inherit version;
-
-    passthru = {
-      inherit nixVersion;
-    };
+    inherit version nixVersion;
 
     workDir = ./.;
     fileset = fileset.unions (
@@ -71,7 +67,7 @@ perl.pkgs.toPerlModule (
       # "Inline" .version so its not a symlink, and includes the suffix
       ''
         chmod u+w .version
-        echo ${finalAttrs.passthru.nixVersion.version} > .version
+        echo ${finalAttrs.nixVersion} > .version
 
         chmod u+w .zix-version
         echo ${finalAttrs.version} > .zix-version

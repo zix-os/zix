@@ -16,6 +16,7 @@
 
   version,
   nixVersion,
+  zixVersion,
 
   # Whether to enable Markdown rendering in the Nix binary.
   enableMarkdown ? !stdenv.hostPlatform.isWindows,
@@ -27,7 +28,7 @@ in
 
 mkMesonLibrary (finalAttrs: {
   pname = "zix-cmd";
-  inherit version;
+  inherit version nixVersion;
 
   workDir = ./.;
   fileset = fileset.unions [
@@ -55,17 +56,6 @@ mkMesonLibrary (finalAttrs: {
     nix-main
     nlohmann_json
   ];
-
-  preConfigure =
-    # "Inline" .version so it's not a symlink, and includes the suffix.
-    # Do the meson utils, without modification.
-    ''
-      chmod u+w ./.version
-      echo ${nixVersion.version} > ../../.version
-
-      chmod u+w ./.zix-version
-      echo ${version} > ../../.zix-version
-    '';
 
   mesonFlags = [
     (lib.mesonEnable "markdown" enableMarkdown)

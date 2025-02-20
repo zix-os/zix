@@ -30,7 +30,7 @@ in
 
 mkMesonLibrary (finalAttrs: {
   pname = "zix-store";
-  inherit version;
+  inherit version nixVersion;
 
   workDir = ./.;
   fileset = fileset.unions [
@@ -71,17 +71,6 @@ mkMesonLibrary (finalAttrs: {
     nix-util
     nlohmann_json
   ];
-
-  preConfigure =
-    # "Inline" .version so it's not a symlink, and includes the suffix.
-    # Do the meson utils, without modification.
-    ''
-      chmod u+w ./.version
-      echo ${nixVersion.version} > ../../.version
-
-      chmod u+w ./.zix-version
-      echo ${version} > ../../.zix-version
-    '';
 
   mesonFlags =
     [

@@ -21,7 +21,7 @@ in
 
 mkMesonLibrary (finalAttrs: {
   pname = "zix-util";
-  inherit version;
+  inherit version nixVersion;
 
   workDir = ./.;
   fileset = fileset.unions [
@@ -52,20 +52,6 @@ mkMesonLibrary (finalAttrs: {
     libarchive
     nlohmann_json
   ];
-
-  preConfigure =
-    # "Inline" .version so it's not a symlink, and includes the suffix.
-    # Do the meson utils, without modification.
-    #
-    # TODO: change release process to add `pre` in `.version`, remove it
-    # before tagging, and restore after.
-    ''
-      chmod u+w ./.version
-      echo ${nixVersion.version} > ../../.version
-
-      chmod u+w ./.zix-version
-      echo ${version} > ../../.zix-version
-    '';
 
   mesonFlags = [
     (lib.mesonBool "cpuid" (stdenv.hostPlatform.isx86_64 || stdenv.hostPlatform.isAarch64))

@@ -35,7 +35,7 @@ in
 mkMesonDerivation (
   finalAttrs:
   {
-    inherit pname version;
+    inherit pname version nixVersion;
 
     workDir = ./.;
     fileset = fileset.unions [
@@ -77,19 +77,10 @@ mkMesonDerivation (
     ];
 
     preConfigure =
-      # "Inline" .version so it's not a symlink, and includes the suffix.
-      # Do the meson utils, without modification.
-      ''
-        chmod u+w ./.version
-        echo ${nixVersion.version} > ../../../.version
-
-        chmod u+w ./.zix-version
-        echo ${version} > ../../../.zix-version
-      ''
       # TEMP hack for Meson before make is gone, where
       # `src/nix-functional-tests` is during the transition a symlink and
       # not the actual directory directory.
-      + ''
+      ''
         cd $(readlink -e $PWD)
         echo $PWD | grep tests/functional
       '';
@@ -110,6 +101,8 @@ mkMesonDerivation (
 
   }
   // lib.optionalAttrs (test-daemon != null) {
+    # TODO rename to _NIX_TEST_DAEMON_PACKAGE
     NIX_DAEMON_PACKAGE = test-daemon;
+    _NIX_TEST_CLIENT_VERSION = nix-cli.version;
   }
 )

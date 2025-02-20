@@ -16,7 +16,7 @@ in
 
 mkMesonDerivation (finalAttrs: {
   pname = "zix-external-api-docs";
-  inherit version;
+  inherit version nixVersion;
 
   workDir = ./.;
   fileset =
@@ -45,7 +45,7 @@ mkMesonDerivation (finalAttrs: {
 
   preConfigure = ''
     chmod u+w ./.version
-    echo ${finalAttrs.passthru.nixVersion.version} > ./.version
+    echo ${finalAttrs.nixVersion} > ./.version
 
     chmod u+w ./.zix-version
     echo ${finalAttrs.version} > ./.zix-version
