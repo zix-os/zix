@@ -257,7 +257,7 @@
           packaging-overriding =
             let
               pkgs = nixpkgsFor.${system}.native;
-              nix = self.packages.${system}.nix;
+              nix = self.packages.${system}.zix;
             in
             assert (nix.appendPatches [ pkgs.emptyFile ]).libs.nix-util.src.patches == [ pkgs.emptyFile ];
             if pkgs.stdenv.buildPlatform.isDarwin then
