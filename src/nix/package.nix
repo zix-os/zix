@@ -20,7 +20,8 @@ in
 
 mkMesonExecutable (finalAttrs: {
   pname = "zix";
-  inherit (nixVersion) version;
+  inherit nixVersion;
+  version = nixVersion;
 
   workDir = ./.;
   fileset = fileset.unions (
@@ -94,17 +95,6 @@ mkMesonExecutable (finalAttrs: {
     nix-main
     nix-cmd
   ];
-
-  preConfigure =
-    # "Inline" .version so it's not a symlink, and includes the suffix.
-    # Do the meson utils, without modification.
-    ''
-      chmod u+w ./.version
-      echo ${nixVersion.version} > ../../../.version
-
-      chmod u+w ./.zix-version
-      echo ${version} > ../../../.zix-version
-    '';
 
   mesonFlags = [
   ];

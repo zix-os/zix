@@ -85,11 +85,6 @@ public:
     std::vector<Path> nixUserConfFiles;
 
     /**
-     * The directory where the man pages are stored.
-     */
-    Path nixManDir;
-
-    /**
      * File name of the socket the daemon listens to.
      */
     Path nixDaemonSocketFile;
@@ -189,7 +184,7 @@ public:
         this, SYSTEM, "system",
         R"(
           The system type of the current Nix installation.
-          Nix will only build a given [derivation](@docroot@/language/derivations.md) locally when its `system` attribute equals any of the values specified here or in [`extra-platforms`](#conf-extra-platforms).
+          Nix will only build a given [store derivation](@docroot@/glossary.md#gloss-store-derivation) locally when its `system` attribute equals any of the values specified here or in [`extra-platforms`](#conf-extra-platforms).
 
           The default value is set when Nix itself is compiled for the system it will run on.
           The following system types are widely used, as Nix is actively supported on these platforms:
@@ -825,7 +820,7 @@ public:
         R"(
           System types of executables that can be run on this machine.
 
-          Nix will only build a given [derivation](@docroot@/language/derivations.md) locally when its `system` attribute equals any of the values specified here or in the [`system` option](#conf-system).
+          Nix will only build a given [store derivation](@docroot@/glossary.md#gloss-store-derivation) locally when its `system` attribute equals any of the values specified here or in the [`system` option](#conf-system).
 
           Setting this can be useful to build derivations locally on compatible machines:
           - `i686-linux` executables can be run on `x86_64-linux` machines (set by default)
@@ -1253,8 +1248,20 @@ void loadConfFile(AbstractConfig & config);
 // Used by the Settings constructor
 std::vector<Path> getUserConfigFiles();
 
-extern const std::string zixVersion;
-extern const std::string nixVersion;
+/**
+ * The version of Zix itself.
+ *
+ * This is not `const`, so that the Nix CLI can provide a more detailed version
+ * number including the git revision, without having to "re-compile" the entire
+ * set of Nix libraries to include that version, even when those libraries are
+ * not affected by the change.
+ */
+extern std::string zixVersion;
+
+/**
+ * The version of CppNix that Zix is based on.
+ */
+extern std::string nixVersion;
 
 /**
  * @param loadConfig Whether to load configuration from `nix.conf`, `NIX_CONFIG`, etc. May be disabled for unit tests.

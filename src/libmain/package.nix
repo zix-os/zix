@@ -17,7 +17,7 @@ in
 
 mkMesonLibrary (finalAttrs: {
   pname = "zix-main";
-  inherit version;
+  inherit version nixVersion;
 
   workDir = ./.;
   fileset = fileset.unions [
@@ -36,17 +36,6 @@ mkMesonLibrary (finalAttrs: {
     nix-util
     nix-store
   ];
-
-  preConfigure =
-    # "Inline" .version so it's not a symlink, and includes the suffix.
-    # Do the meson utils, without modification.
-    ''
-      chmod u+w ./.version
-      echo ${nixVersion.version} > ../../.version
-
-      chmod u+w ./.zix-version
-      echo ${version} > ../../.zix-version
-    '';
 
   meta = {
     platforms = lib.platforms.unix ++ lib.platforms.windows;
