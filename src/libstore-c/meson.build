@@ -25,15 +25,6 @@ deps_public_maybe_subproject = [
 ]
 subdir('nix-meson-build-support/subprojects')
 
-# TODO rename, because it will conflict with downstream projects
-configdata.set_quoted('PACKAGE_VERSION_ZIX', meson.project_version())
-configdata.set_quoted('PACKAGE_VERSION_NIX', fs.read('.version').strip().split('\n')[0])
-
-config_h = configure_file(
-  configuration : configdata,
-  output : 'config-store.h',
-)
-
 add_project_arguments(
   # TODO(Qyriad): Yes this is how the autoconf+Make system did it.
   # It would be nice for our headers to be idempotent instead.

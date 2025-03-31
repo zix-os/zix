@@ -9,7 +9,6 @@ extern "C" const char ** nix_libutil_cpuid();
 StringSet computeLevels()
 {
     StringSet levels;
-    struct cpu_id_t data;
 
     const char ** value = nix_libutil_cpuid();
     if (value != nullptr) {

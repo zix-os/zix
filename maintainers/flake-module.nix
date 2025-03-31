@@ -39,7 +39,7 @@
           };
           zigfmt = {
             enable = true;
-            entry = "${lib.getExe pkgs.zig_0_14} fmt";
+            entry = "${lib.getExe pkgs.zig_0_15} fmt";
             files = "\\.zig$";
             description = "Check format of Zig files";
           };

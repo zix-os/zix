@@ -117,10 +117,6 @@ this_library = library(
   config_h,
   dependencies : deps_public + deps_private + deps_other,
   include_directories : include_dirs,
-<<<<<<< HEAD
-=======
-  link_args: linker_export_flags,
->>>>>>> 3f13cc0f8739a1a70e52326af9ec49cee536128a
   prelink : true, # For C++ static initializers
   install : true,
 )

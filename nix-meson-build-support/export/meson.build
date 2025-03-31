@@ -27,7 +27,6 @@ import('pkgconfig').generate(
 meson.override_dependency(meson.project_name(), declare_dependency(
   include_directories : include_dirs,
   link_with : this_library,
-  compile_args : ['-std=c++2a'],
   dependencies : deps_public_subproject + deps_public,
   variables : extra_pkg_config_variables,
 ))

@@ -1,6 +1,7 @@
 #include "config-global.hh"
 #include "args.hh"
 #include "nix_api_util.h"
+#include "config-util.h"
 #include "nix_api_util_internal.h"
 #include "tests/nix_api_util.hh"
 #include "tests/string_callback.hh"
