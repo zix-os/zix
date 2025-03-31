@@ -7,6 +7,7 @@
   nix-fetchers,
   nix-store-test-support,
 
+  libgit2,
   rapidcheck,
   gtest,
   runCommand,
@@ -45,6 +46,7 @@ mkMesonExecutable (finalAttrs: {
     nix-store-test-support
     rapidcheck
     gtest
+    libgit2
   ];
 
   mesonFlags = [

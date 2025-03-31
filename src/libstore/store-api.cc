@@ -230,17 +230,21 @@ void Store::addMultipleToStore(
 {
     std::atomic<size_t> nrDone{0};
     std::atomic<size_t> nrFailed{0};
-    std::atomic<uint64_t> bytesExpected{0};
     std::atomic<uint64_t> nrRunning{0};
 
     using PathWithInfo = std::pair<ValidPathInfo, std::unique_ptr<Source>>;
 
+    uint64_t bytesExpected = 0;
+
     std::map<StorePath, PathWithInfo *> infosMap;
     StorePathSet storePathsToAdd;
     for (auto & thingToAdd : pathsToCopy) {
+        bytesExpected += thingToAdd.first.narSize;
         infosMap.insert_or_assign(thingToAdd.first.path, &thingToAdd);
         storePathsToAdd.insert(thingToAdd.first.path);
     }
+
+    act.setExpected(actCopyPath, bytesExpected);
 
     auto showProgress = [&, nrTotal = pathsToCopy.size()]() {
         act.progress(nrDone, nrTotal, nrRunning, nrFailed);
@@ -258,9 +262,6 @@ void Store::addMultipleToStore(
                 showProgress();
                 return StorePathSet();
             }
-
-            bytesExpected += info.narSize;
-            act.setExpected(actCopyPath, bytesExpected);
 
             return info.references;
         },
@@ -1272,6 +1273,34 @@ Derivation Store::readDerivation(const StorePath & drvPath)
 
 Derivation Store::readInvalidDerivation(const StorePath & drvPath)
 { return readDerivationCommon(*this, drvPath, false); }
+
+
+void Store::signPathInfo(ValidPathInfo & info)
+{
+    // FIXME: keep secret keys in memory.
+
+    auto secretKeyFiles = settings.secretKeyFiles;
+
+    for (auto & secretKeyFile : secretKeyFiles.get()) {
+        SecretKey secretKey(readFile(secretKeyFile));
+        LocalSigner signer(std::move(secretKey));
+        info.sign(*this, signer);
+    }
+}
+
+
+void Store::signRealisation(Realisation & realisation)
+{
+    // FIXME: keep secret keys in memory.
+
+    auto secretKeyFiles = settings.secretKeyFiles;
+
+    for (auto & secretKeyFile : secretKeyFiles.get()) {
+        SecretKey secretKey(readFile(secretKeyFile));
+        LocalSigner signer(std::move(secretKey));
+        realisation.sign(signer);
+    }
+}
 
 }
 

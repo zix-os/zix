@@ -18,8 +18,10 @@
 #include "network-proxy.hh"
 #include "eval-cache.hh"
 #include "flake/flake.hh"
+#include "flake/settings.hh"
 #include "self-exe.hh"
 #include "json-utils.hh"
+#include "crash-handler.hh"
 
 #include <sys/types.h>
 #include <regex>
@@ -354,6 +356,8 @@ void mainWrapped(int argc, char * * argv)
 {
     savedArgv = argv;
 
+    registerCrashHandler();
+
     /* The chroot helper needs to be run before any threads have been
        started. */
 #ifndef _WIN32
@@ -365,7 +369,7 @@ void mainWrapped(int argc, char * * argv)
 
     initNix();
     initGC();
-    flake::initLib(flakeSettings);
+    flakeSettings.configureEvalSettings(evalSettings);
 
     /* Set the build hook location
 

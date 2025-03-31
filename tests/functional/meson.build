@@ -158,6 +158,7 @@ suites = [
       'impure-derivations.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
+      'json.sh',
       'toString-path.sh',
       'read-only-store.sh',
       'nested-sandboxing.sh',

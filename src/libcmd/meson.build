@@ -49,9 +49,7 @@ add_project_arguments(
   # It would be nice for our headers to be idempotent instead.
   '-include', 'config-util.hh',
   '-include', 'config-store.hh',
-  # '-include', 'config-fetchers.h',
   '-include', 'config-expr.hh',
-  '-include', 'config-main.hh',
   '-include', 'config-cmd.hh',
   language : 'cpp',
 )
@@ -79,7 +77,7 @@ sources = files(
 
 include_dirs = [include_directories('.')]
 
-headers = [config_h] + files(
+headers = files(
   'built-path.hh',
   'command-installable-value.hh',
   'command.hh',
@@ -116,8 +114,13 @@ include_dirs += fs.parent(fs.parent(zig.full_path())) / 'lib' / 'zig'
 this_library = library(
   'nixcmd',
   sources,
+  config_h,
   dependencies : deps_public + deps_private + deps_other,
   include_directories : include_dirs,
+<<<<<<< HEAD
+=======
+  link_args: linker_export_flags,
+>>>>>>> 3f13cc0f8739a1a70e52326af9ec49cee536128a
   prelink : true, # For C++ static initializers
   install : true,
 )

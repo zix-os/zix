@@ -288,10 +288,6 @@ EvalState::EvalState(
         CanonPath("derivation-internal.nix"),
         #include "primops/derivation.nix.gen.hh"
     )}
-    , callFlakeInternal{internalFS->addFile(
-        CanonPath("call-flake.nix"),
-        #include "call-flake.nix.gen.hh"
-    )}
     , store(store)
     , buildStore(buildStore ? buildStore : store)
     , debugRepl(nullptr)
@@ -353,7 +349,7 @@ EvalState::EvalState(
         #include "fetchurl.nix.gen.hh"
     );
 
-    createBaseEnv();
+    createBaseEnv(settings);
 }
 
 
@@ -771,18 +767,26 @@ void EvalState::runDebugRepl(const Error * error, const Env & env, const Expr & 
     if (!debugRepl || inDebugger)
         return;
 
-    auto dts =
-        error && expr.getPos()
-        ? std::make_unique<DebugTraceStacker>(
-            *this,
-            DebugTrace {
-                .pos = error->info().pos ? error->info().pos : positions[expr.getPos()],
+    auto dts = [&]() -> std::unique_ptr<DebugTraceStacker> {
+        if (error && expr.getPos()) {
+            auto trace = DebugTrace{
+                .pos = [&]() -> std::variant<Pos, PosIdx> {
+                    if (error->info().pos) {
+                        if (auto * pos = error->info().pos.get())
+                            return *pos;
+                        return noPos;
+                    }
+                    return expr.getPos();
+                }(),
                 .expr = expr,
                 .env = env,
                 .hint = error->info().msg,
-                .isError = true
-            })
-        : nullptr;
+                .isError = true};
+
+            return std::make_unique<DebugTraceStacker>(*this, std::move(trace));
+        }
+        return nullptr;
+    }();
 
     if (error)
     {
@@ -827,7 +831,7 @@ static std::unique_ptr<DebugTraceStacker> makeDebugTraceStacker(
     EvalState & state,
     Expr & expr,
     Env & env,
-    std::shared_ptr<Pos> && pos,
+    std::variant<Pos, PosIdx> pos,
     const Args & ... formatArgs)
 {
     return std::make_unique<DebugTraceStacker>(state,
@@ -1104,7 +1108,7 @@ void EvalState::evalFile(const SourcePath & path, Value & v, bool mustBeTrivial)
                 *this,
                 *e,
                 this->baseEnv,
-                e->getPos() ? std::make_shared<Pos>(positions[e->getPos()]) : nullptr,
+                e->getPos(),
                 "while evaluating the file '%1%':", resolvedPath.to_string())
             : nullptr;
 
@@ -1330,9 +1334,7 @@ void ExprLet::eval(EvalState & state, Env & env, Value & v)
             state,
             *this,
             env2,
-            getPos()
-                ? std::make_shared<Pos>(state.positions[getPos()])
-                : nullptr,
+            getPos(),
             "while evaluating a '%1%' expression",
             "let"
         )
@@ -1401,7 +1403,7 @@ void ExprSelect::eval(EvalState & state, Env & env, Value & v)
                 state,
                 *this,
                 env,
-                state.positions[getPos()],
+                getPos(),
                 "while evaluating the attribute '%1%'",
                 showAttrPath(state, env, attrPath))
             : nullptr;
@@ -1602,7 +1604,7 @@ void EvalState::callFunction(Value & fun, std::span<Value *> args, Value & vRes,
             try {
                 auto dts = debugRepl
                     ? makeDebugTraceStacker(
-                        *this, *lambda.body, env2, positions[lambda.pos],
+                        *this, *lambda.body, env2, lambda.pos,
                         "while calling %s",
                         lambda.name
                         ? concatStrings("'", symbols[lambda.name], "'")
@@ -1737,9 +1739,7 @@ void ExprCall::eval(EvalState & state, Env & env, Value & v)
             state,
             *this,
             env,
-            getPos()
-                ? std::make_shared<Pos>(state.positions[getPos()])
-                : nullptr,
+            getPos(),
             "while calling a function"
         )
         : nullptr;
@@ -2123,7 +2123,7 @@ void EvalState::forceValueDeep(Value & v)
                 try {
                     // If the value is a thunk, we're evaling. Otherwise no trace necessary.
                     auto dts = debugRepl && i.value->isThunk()
-                        ? makeDebugTraceStacker(*this, *i.value->payload.thunk.expr, *i.value->payload.thunk.env, positions[i.pos],
+                        ? makeDebugTraceStacker(*this, *i.value->payload.thunk.expr, *i.value->payload.thunk.env, i.pos,
                             "while evaluating the attribute '%1%'", symbols[i.name])
                         : nullptr;
 
@@ -2245,18 +2245,18 @@ std::string_view EvalState::forceString(Value & v, const PosIdx pos, std::string
 }
 
 
-void copyContext(const Value & v, NixStringContext & context)
+void copyContext(const Value & v, NixStringContext & context, const ExperimentalFeatureSettings & xpSettings)
 {
     if (v.payload.string.context)
         for (const char * * p = v.payload.string.context; *p; ++p)
-            context.insert(NixStringContextElem::parse(*p));
+            context.insert(NixStringContextElem::parse(*p, xpSettings));
 }
 
 
-std::string_view EvalState::forceString(Value & v, NixStringContext & context, const PosIdx pos, std::string_view errorCtx)
+std::string_view EvalState::forceString(Value & v, NixStringContext & context, const PosIdx pos, std::string_view errorCtx, const ExperimentalFeatureSettings & xpSettings)
 {
     auto s = forceString(v, pos, errorCtx);
-    copyContext(v, context);
+    copyContext(v, context, xpSettings);
     return s;
 }
 
@@ -2462,10 +2462,10 @@ StorePath EvalState::coerceToStorePath(const PosIdx pos, Value & v, NixStringCon
 }
 
 
-std::pair<SingleDerivedPath, std::string_view> EvalState::coerceToSingleDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx)
+std::pair<SingleDerivedPath, std::string_view> EvalState::coerceToSingleDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx, const ExperimentalFeatureSettings & xpSettings)
 {
     NixStringContext context;
-    auto s = forceString(v, context, pos, errorCtx);
+    auto s = forceString(v, context, pos, errorCtx, xpSettings);
     auto csize = context.size();
     if (csize != 1)
         error<EvalError>(

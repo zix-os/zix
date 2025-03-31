@@ -25,11 +25,11 @@ TEST_F(nix_api_store_test, nix_api_init_global_getFlake_exists)
     assert_ctx_ok();
     ASSERT_NE(nullptr, settings);
 
-    nix_flake_init_global(ctx, settings);
-    assert_ctx_ok();
-
     nix_eval_state_builder * builder = nix_eval_state_builder_new(ctx, store);
     ASSERT_NE(nullptr, builder);
+    assert_ctx_ok();
+
+    nix_flake_settings_add_to_eval_state_builder(ctx, settings, builder);
     assert_ctx_ok();
 
     auto state = nix_eval_state_build(ctx, builder);
@@ -43,6 +43,9 @@ TEST_F(nix_api_store_test, nix_api_init_global_getFlake_exists)
     ASSERT_NE(nullptr, value);
 
     nix_err err = nix_expr_eval_from_string(ctx, state, "builtins.getFlake", ".", value);
+
+    nix_state_free(state);
+
     assert_ctx_ok();
     ASSERT_EQ(NIX_OK, err);
     ASSERT_EQ(NIX_TYPE_FUNCTION, nix_get_type(ctx, value));

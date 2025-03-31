@@ -102,8 +102,7 @@ struct NixRepl
                               unsigned int maxDepth = std::numeric_limits<unsigned int>::max())
     {
         // Hide the progress bar during printing because it might interfere
-        logger->pause();
-        Finally resumeLoggerDefer([]() { logger->resume(); });
+        auto suspension = logger->suspend();
         ::nix::printValue(*state, str, v, PrintOptions {
             .ansiColors = true,
             .force = true,
@@ -125,11 +124,11 @@ std::string removeWhitespace(std::string s)
 
 
 NixRepl::NixRepl(const LookupPath & lookupPath, nix::ref<Store> store, ref<EvalState> state,
-            std::function<NixRepl::AnnotatedValues()> getValues, RunNix * runNix = nullptr)
+            std::function<NixRepl::AnnotatedValues()> getValues, RunNix * runNix)
     : AbstractNixRepl(state)
     , debugTraceIndex(0)
     , getValues(getValues)
-    , staticEnv(new StaticEnv(nullptr, state->staticBaseEnv.get()))
+    , staticEnv(new StaticEnv(nullptr, state->staticBaseEnv))
     , runNixPtr{runNix}
     , interacter(make_unique<ReadlineLikeInteracter>(getDataDir() + "/repl-history"))
 {
@@ -141,16 +140,13 @@ static std::ostream & showDebugTrace(std::ostream & out, const PosTable & positi
         out << ANSI_RED "error: " << ANSI_NORMAL;
     out << dt.hint.str() << "\n";
 
-    // prefer direct pos, but if noPos then try the expr.
-    auto pos = dt.pos
-        ? dt.pos
-        : positions[dt.expr.getPos() ? dt.expr.getPos() : noPos];
+    auto pos = dt.getPos(positions);
 
     if (pos) {
-        out << *pos;
-        if (auto loc = pos->getCodeLines()) {
+        out << pos;
+        if (auto loc = pos.getCodeLines()) {
             out << "\n";
-            printCodeLines(out, "", *pos, *loc);
+            printCodeLines(out, "", pos, *loc);
             out << "\n";
         }
     }
@@ -180,18 +176,20 @@ ReplExitStatus NixRepl::mainLoop()
 
     while (true) {
         // Hide the progress bar while waiting for user input, so that it won't interfere.
-        logger->pause();
-        // When continuing input from previous lines, don't print a prompt, just align to the same
-        // number of chars as the prompt.
-        if (!interacter->getLine(input, input.empty() ? ReplPromptType::ReplPrompt : ReplPromptType::ContinuationPrompt)) {
-            // Ctrl-D should exit the debugger.
-            state->debugStop = false;
-            logger->cout("");
-            // TODO: Should Ctrl-D exit just the current debugger session or
-            // the entire program?
-            return ReplExitStatus::QuitAll;
+        {
+            auto suspension = logger->suspend();
+            // When continuing input from previous lines, don't print a prompt, just align to the same
+            // number of chars as the prompt.
+            if (!interacter->getLine(input, input.empty() ? ReplPromptType::ReplPrompt : ReplPromptType::ContinuationPrompt)) {
+                // Ctrl-D should exit the debugger.
+                state->debugStop = false;
+                logger->cout("");
+                // TODO: Should Ctrl-D exit just the current debugger session or
+                // the entire program?
+                return ReplExitStatus::QuitAll;
+            }
+            // `suspension` resumes the logger
         }
-        logger->resume();
         try {
             switch (processLine(input)) {
                 case ProcessLineResult::Quit:
@@ -586,6 +584,7 @@ ProcessLineResult NixRepl::processLine(std::string line)
     else if (command == ":p" || command == ":print") {
         Value v;
         evalString(arg, v);
+        auto suspension = logger->suspend();
         if (v.type() == nString) {
             std::cout << v.string_view();
         } else {
@@ -694,6 +693,7 @@ ProcessLineResult NixRepl::processLine(std::string line)
         } else {
             Value v;
             evalString(line, v);
+            auto suspension = logger->suspend();
             printValue(std::cout, v, 1);
             std::cout << std::endl;
         }
@@ -839,9 +839,10 @@ std::unique_ptr<AbstractNixRepl> AbstractNixRepl::create(
 {
     return std::make_unique<NixRepl>(
         lookupPath,
-        openStore(),
+        std::move(store),
         state,
-        getValues
+        getValues,
+        runNix
     );
 }
 
@@ -859,7 +860,8 @@ ReplExitStatus AbstractNixRepl::runSimple(
             lookupPath,
             openStore(),
             evalState,
-            getValues
+            getValues,
+            /*runNix=*/nullptr
         );
 
     repl->initEnv();

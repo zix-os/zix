@@ -41,8 +41,6 @@ add_project_arguments(
   # From C++ libraries, only for internals
   '-include', 'config-util.hh',
 
-  # From C libraries, for our public, installed headers too
-  '-include', 'config-util.h',
   language : 'cpp',
 )
 
@@ -54,7 +52,7 @@ sources = files(
 
 include_dirs = [include_directories('.')]
 
-headers = [config_h] + files(
+headers = files(
   'nix_api_util.h',
 )
 
@@ -67,6 +65,7 @@ subdir('nix-meson-build-support/windows-version')
 this_library = library(
   'nixutilc',
   sources,
+  config_h,
   dependencies : deps_public + deps_private + deps_other,
   include_directories : include_dirs,
   link_args: linker_export_flags,

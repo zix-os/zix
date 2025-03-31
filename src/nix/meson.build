@@ -57,9 +57,6 @@ add_project_arguments(
   '-include', 'config-util.hh',
   '-include', 'config-store.hh',
   '-include', 'config-expr.hh',
-  #'-include', 'config-fetchers.hh',
-  '-include', 'config-main.hh',
-  '-include', 'config-cmd.hh',
   '-include', 'config-nix-cli.hh',
   language : 'cpp',
 )
@@ -77,6 +74,7 @@ nix_sources = [config_h] + files(
   'config-check.cc',
   'config.cc',
   'copy.cc',
+  'crash-handler.cc',
   'derivation-add.cc',
   'derivation-show.cc',
   'derivation.cc',

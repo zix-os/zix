@@ -16,8 +16,6 @@ cxx = meson.get_compiler('cpp')
 
 subdir('nix-meson-build-support/deps-lists')
 
-configdata = configuration_data()
-
 deps_private_maybe_subproject = [
   dependency('nix-util'),
   dependency('nix-store'),
@@ -44,9 +42,6 @@ add_project_arguments(
   '-include', 'config-util.hh',
   '-include', 'config-store.hh',
 
-  # From C libraries, for our public, installed headers too
-  '-include', 'config-util.h',
-  '-include', 'config-store.h',
   language : 'cpp',
 )
 
@@ -58,7 +53,7 @@ sources = files(
 
 include_dirs = [include_directories('.')]
 
-headers = [config_h] + files(
+headers = files(
   'nix_api_store.h',
 )
 

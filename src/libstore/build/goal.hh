@@ -50,31 +50,23 @@ enum struct JobCategory {
      * A substitution an arbitrary store object; it will use network resources.
      */
     Substitution,
-    /**
-     * A goal that does no "real" work by itself, and just exists to depend on
-     * other goals which *do* do real work. These goals therefore are not
-     * limited.
-     *
-     * These goals cannot infinitely create themselves, so there is no risk of
-     * a "fork bomb" type situation (which would be a problem even though the
-     * goal do no real work) either.
-     */
-    Administration,
 };
 
 struct Goal : public std::enable_shared_from_this<Goal>
 {
+private:
+    /**
+     * Goals that this goal is waiting for.
+     */
+    Goals waitees;
+
+public:
     typedef enum {ecBusy, ecSuccess, ecFailed, ecNoSubstituters, ecIncompleteClosure} ExitCode;
 
     /**
      * Backlink to the worker.
      */
     Worker & worker;
-
-    /**
-     * Goals that this goal is waiting for.
-     */
-    Goals waitees;
 
     /**
      * Goals waiting for this one to finish.  Must use weak pointers
@@ -114,8 +106,8 @@ protected:
      * Build result.
      */
     BuildResult buildResult;
-public:
 
+public:
     /**
      * Suspend our goal and wait until we get `work`-ed again.
      * `co_await`-able by @ref Co.
@@ -342,6 +334,7 @@ public:
         std::suspend_always await_transform(Suspend) { return {}; };
     };
 
+protected:
     /**
      * The coroutine being currently executed.
      * MUST be updated when switching the coroutine being executed.
@@ -369,6 +362,7 @@ public:
      */
     Done amDone(ExitCode result, std::optional<Error> ex = {});
 
+public:
     virtual void cleanup() { }
 
     /**
@@ -384,22 +378,11 @@ public:
     BuildResult getBuildResult(const DerivedPath &) const;
 
     /**
-     * Hack to say that this goal should not log `ex`, but instead keep
-     * it around. Set by a waitee which sees itself as the designated
-     * continuation of this goal, responsible for reporting its
-     * successes or failures.
-     *
-     * @todo this is yet another not-nice hack in the goal system that
-     * we ought to get rid of. See #11927
-     */
-    bool preserveException = false;
-
-    /**
      * Exception containing an error message, if any.
      */
     std::optional<Error> ex;
 
-    Goal(Worker & worker, DerivedPath path)
+    Goal(Worker & worker)
         : worker(worker), top_co(init_wrapper())
     {
         // top_co shouldn't have a goal already, should be nullptr.
@@ -414,10 +397,6 @@ public:
     }
 
     void work();
-
-    void addWaitee(GoalPtr waitee);
-
-    virtual void waiteeDone(GoalPtr waitee, ExitCode result);
 
     virtual void handleChildOutput(Descriptor fd, std::string_view data)
     {
@@ -450,6 +429,13 @@ public:
      * @see JobCategory
      */
     virtual JobCategory jobCategory() const = 0;
+
+protected:
+    Co await(Goals waitees);
+
+    Co waitForAWhile();
+    Co waitForBuildSlot();
+    Co yield();
 };
 
 void addToWeakGoals(WeakGoals & goals, GoalPtr p);

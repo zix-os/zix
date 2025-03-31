@@ -91,7 +91,7 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
     if (drvs.empty()) return {};
 
     if (isIFD && !settings.enableImportFromDerivation)
-        error<EvalBaseError>(
+        error<IFDError>(
             "cannot build '%1%' during evaluation because the option 'allow-import-from-derivation' is disabled",
             drvs.begin()->to_string(*store)
         ).debugThrow();
@@ -238,7 +238,7 @@ static void scopedImport(EvalState & state, const PosIdx pos, SourcePath & path,
     Env * env = &state.allocEnv(vScope->attrs()->size());
     env->up = &state.baseEnv;
 
-    auto staticEnv = std::make_shared<StaticEnv>(nullptr, state.staticBaseEnv.get(), vScope->attrs()->size());
+    auto staticEnv = std::make_shared<StaticEnv>(nullptr, state.staticBaseEnv, vScope->attrs()->size());
 
     unsigned int displ = 0;
     for (auto & attr : *vScope->attrs()) {
@@ -1595,7 +1595,7 @@ static RegisterPrimOp primop_placeholder({
     .args = {"output"},
     .doc = R"(
       Return at
-      [output placeholder string](@docroot@/store/drv.md#output-placeholder)
+      [output placeholder string](@docroot@/store/derivation/index.md#output-placeholder)
       for the specified *output* that will be substituted by the corresponding
       [output path](@docroot@/glossary.md#gloss-output-path)
       at build time.
@@ -2139,7 +2139,7 @@ static RegisterPrimOp primop_outputOf({
     .args = {"derivation-reference", "output-name"},
     .doc = R"(
       Return the output path of a derivation, literally or using an
-      [input placeholder string](@docroot@/store/drv.md#input-placeholder)
+      [input placeholder string](@docroot@/store/derivation/index.md#input-placeholder)
       if needed.
 
       If the derivation has a statically-known output path (i.e. the derivation output is input-addressed, or fixed content-addresed), the output path will just be returned.
@@ -2775,7 +2775,13 @@ static void prim_unsafeGetAttrPos(EvalState & state, const PosIdx pos, Value * *
 
 static RegisterPrimOp primop_unsafeGetAttrPos(PrimOp {
     .name = "__unsafeGetAttrPos",
+    .args = {"s", "set"},
     .arity = 2,
+    .doc = R"(
+      `unsafeGetAttrPos` returns the position of the attribute named *s*
+      from *set*. This is used by Nixpkgs to provide location information
+      in error messages.
+    )",
     .fun = prim_unsafeGetAttrPos,
 });
 
@@ -4669,7 +4675,7 @@ RegisterPrimOp::RegisterPrimOp(PrimOp && primOp)
 }
 
 
-void EvalState::createBaseEnv()
+void EvalState::createBaseEnv(const EvalSettings & evalSettings)
 {
     baseEnv.up = 0;
 
@@ -4940,6 +4946,12 @@ void EvalState::createBaseEnv()
                 primOpAdjusted.arity = std::max(primOp.args.size(), primOp.arity);
                 addPrimOp(std::move(primOpAdjusted));
             }
+
+    for (auto & primOp : evalSettings.extraPrimOps) {
+        auto primOpAdjusted = primOp;
+        primOpAdjusted.arity = std::max(primOp.args.size(), primOp.arity);
+        addPrimOp(std::move(primOpAdjusted));
+    }
 
     /* Add a wrapper around the derivation primop that computes the
        `drvPath' and `outPath' attributes lazily.

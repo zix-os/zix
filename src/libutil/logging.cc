@@ -6,6 +6,7 @@
 #include "config-global.hh"
 #include "source-path.hh"
 #include "position.hh"
+#include "sync.hh"
 
 #include <atomic>
 #include <sstream>
@@ -41,6 +42,19 @@ void Logger::writeToStdout(std::string_view s)
     Descriptor standard_out = getStandardOutput();
     writeFull(standard_out, s);
     writeFull(standard_out, "\n");
+}
+
+Logger::Suspension Logger::suspend()
+{
+    pause();
+    return Suspension { ._finalize = {[this](){this->resume();}} };
+}
+
+std::optional<Logger::Suspension> Logger::suspendIf(bool cond)
+{
+    if (cond)
+        return suspend();
+    return {};
 }
 
 class SimpleLogger : public Logger
@@ -188,9 +202,22 @@ struct JSONLogger : Logger {
                 unreachable();
     }
 
+    struct State
+    {
+    };
+
+    Sync<State> _state;
+
     void write(const nlohmann::json & json)
     {
-        writeLine(fd, "@nix " + json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+        auto line =
+            "@nix " +
+            json.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+
+        /* Acquire a lock to prevent log messages from clobbering each
+           other. */
+        auto state(_state.lock());
+        writeLine(fd, line);
     }
 
     void log(Verbosity lvl, std::string_view s) override

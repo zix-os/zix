@@ -7,7 +7,6 @@
 #include "store-api.hh"
 #include "outputs-spec.hh"
 #include "derivations.hh"
-#include "progress-bar.hh"
 
 #ifndef _WIN32 // TODO re-enable on Windows
 # include "run.hh"
@@ -64,13 +63,11 @@ struct BuildEnvironment
     std::map<std::string, std::string> bashFunctions;
     std::optional<std::pair<std::string, std::string>> structuredAttrs;
 
-    static BuildEnvironment fromJSON(std::string_view in)
+    static BuildEnvironment fromJSON(const nlohmann::json & json)
     {
         BuildEnvironment res;
 
         std::set<std::string> exported;
-
-        auto json = nlohmann::json::parse(in);
 
         for (auto & [name, info] : json["variables"].items()) {
             std::string type = info["type"];
@@ -93,7 +90,14 @@ struct BuildEnvironment
         return res;
     }
 
-    std::string toJSON() const
+    static BuildEnvironment parseJSON(std::string_view in)
+    {
+        auto json = nlohmann::json::parse(in);
+
+        return fromJSON(json);
+    }
+
+    nlohmann::json toJSON() const
     {
         auto res = nlohmann::json::object();
 
@@ -125,11 +129,9 @@ struct BuildEnvironment
             res["structuredAttrs"] = std::move(contents);
         }
 
-        auto json = res.dump();
+        assert(BuildEnvironment::fromJSON(res) == *this);
 
-        assert(BuildEnvironment::fromJSON(json) == *this);
-
-        return json;
+        return res;
     }
 
     bool providesStructuredAttrs() const
@@ -506,7 +508,7 @@ struct Common : InstallableCommand, MixProfile
 
         debug("reading environment file '%s'", strPath);
 
-        return {BuildEnvironment::fromJSON(readFile(store->toRealPath(shellOutPath))), strPath};
+        return {BuildEnvironment::parseJSON(readFile(store->toRealPath(shellOutPath))), strPath};
     }
 };
 
@@ -731,10 +733,10 @@ struct CmdPrintDevEnv : Common, MixJSON
     {
         auto buildEnvironment = getBuildEnvironment(store, installable).first;
 
-        stopProgressBar();
+        logger->stop();
 
         if (json) {
-            logger->writeToStdout(buildEnvironment.toJSON());
+            printJSON(buildEnvironment.toJSON());
         } else {
             AutoDelete tmpDir(createTempDir("", "nix-dev-env"), true);
             logger->writeToStdout(makeRcScript(store, buildEnvironment, tmpDir));

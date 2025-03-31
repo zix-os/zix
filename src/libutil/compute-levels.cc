@@ -4,12 +4,14 @@ namespace nix {
 
 #if HAVE_LIBCPUID
 
-extern "C" const char** nix_libutil_cpuid();
+extern "C" const char ** nix_libutil_cpuid();
 
-StringSet computeLevels() {
+StringSet computeLevels()
+{
     StringSet levels;
+    struct cpu_id_t data;
 
-    const char** value = nix_libutil_cpuid();
+    const char ** value = nix_libutil_cpuid();
     if (value != nullptr) {
         for (size_t i = 0; value[i] != nullptr; i++) {
             levels.insert(value[i]);
@@ -21,7 +23,8 @@ StringSet computeLevels() {
 
 #else
 
-StringSet computeLevels() {
+StringSet computeLevels()
+{
     return StringSet{};
 }
 

@@ -11,6 +11,7 @@
   git,
   mercurial,
   util-linux,
+  unixtools,
 
   nix-store,
   nix-expr,
@@ -56,6 +57,7 @@ mkMesonDerivation (
         jq
         git
         mercurial
+        unixtools.script
       ]
       ++ lib.optionals stdenv.hostPlatform.isLinux [
         # For various sandboxing tests that needs a statically-linked shell,

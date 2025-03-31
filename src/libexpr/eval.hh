@@ -159,7 +159,7 @@ void printEnvBindings(const SymbolTable & st, const StaticEnv & se, const Env & 
 
 std::unique_ptr<ValMap> mapStaticEnvBindings(const SymbolTable & st, const StaticEnv & se, const Env & env);
 
-void copyContext(const Value & v, NixStringContext & context);
+void copyContext(const Value & v, NixStringContext & context, const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
 
 
 std::string printValue(EvalState & state, Value & v);
@@ -171,11 +171,28 @@ struct RegexCache;
 std::shared_ptr<RegexCache> makeRegexCache();
 
 struct DebugTrace {
-    std::shared_ptr<Pos> pos;
+    /* WARNING: Converting PosIdx -> Pos should be done with extra care. This is
+       due to the fact that operator[] of PosTable is incredibly expensive. */
+    std::variant<Pos, PosIdx> pos;
     const Expr & expr;
     const Env & env;
     HintFmt hint;
     bool isError;
+
+    Pos getPos(const PosTable & table) const
+    {
+        return std::visit(
+            overloaded{
+                [&](PosIdx idx) {
+                    // Prefer direct pos, but if noPos then try the expr.
+                    if (!idx)
+                        idx = expr.getPos();
+                    return table[idx];
+                },
+                [&](Pos pos) { return pos; },
+            },
+            pos);
+    }
 };
 
 class EvalState : public std::enable_shared_from_this<EvalState>
@@ -257,13 +274,11 @@ public:
 
     /**
      * In-memory filesystem for internal, non-user-callable Nix
-     * expressions like call-flake.nix.
+     * expressions like `derivation.nix`.
      */
     const ref<MemorySourceAccessor> internalFS;
 
     const SourcePath derivationInternal;
-
-    const SourcePath callFlakeInternal;
 
     /**
      * Store used to materialise .drv files.
@@ -510,7 +525,7 @@ public:
      */
     void forceFunction(Value & v, const PosIdx pos, std::string_view errorCtx);
     std::string_view forceString(Value & v, const PosIdx pos, std::string_view errorCtx);
-    std::string_view forceString(Value & v, NixStringContext & context, const PosIdx pos, std::string_view errorCtx);
+    std::string_view forceString(Value & v, NixStringContext & context, const PosIdx pos, std::string_view errorCtx, const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
     std::string_view forceStringNoCtx(Value & v, const PosIdx pos, std::string_view errorCtx);
 
     template<typename... Args>
@@ -562,7 +577,7 @@ public:
     /**
      * Part of `coerceToSingleDerivedPath()` without any store IO which is exposed for unit testing only.
      */
-    std::pair<SingleDerivedPath, std::string_view> coerceToSingleDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx);
+    std::pair<SingleDerivedPath, std::string_view> coerceToSingleDerivedPathUnchecked(const PosIdx pos, Value & v, std::string_view errorCtx, const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
 
     /**
      * Coerce to `SingleDerivedPath`.
@@ -616,7 +631,7 @@ private:
 
     unsigned int baseEnvDispl = 0;
 
-    void createBaseEnv();
+    void createBaseEnv(const EvalSettings & settings);
 
     Value * addConstant(const std::string & name, Value & v, Constant info);
 

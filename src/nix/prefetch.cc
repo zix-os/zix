@@ -4,7 +4,7 @@
 #include "store-api.hh"
 #include "filetransfer.hh"
 #include "finally.hh"
-#include "progress-bar.hh"
+#include "loggers.hh"
 #include "tarfile.hh"
 #include "attr-path.hh"
 #include "eval-inline.hh"
@@ -190,10 +190,7 @@ static int main_nix_prefetch_url(int argc, char * * argv)
         if (args.size() > 2)
             throw UsageError("too many arguments");
 
-        Finally f([]() { stopProgressBar(); });
-
-        if (isTTY())
-          startProgressBar();
+        setLogFormat("bar");
 
         auto store = openStore();
         auto state = std::make_unique<EvalState>(myArgs.lookupPath, store, fetchSettings, evalSettings);
@@ -247,7 +244,7 @@ static int main_nix_prefetch_url(int argc, char * * argv)
         auto [storePath, hash] = prefetchFile(
             store, resolveMirrorUrl(*state, url), name, ha, expectedHash, unpack, executable);
 
-        stopProgressBar();
+        logger->stop();
 
         if (!printPath)
             printInfo("path is '%s'", store->printStorePath(storePath));
@@ -329,7 +326,7 @@ struct CmdStorePrefetchFile : StoreCommand, MixJSON
             auto res = nlohmann::json::object();
             res["storePath"] = store->printStorePath(storePath);
             res["hash"] = hash.to_string(HashFormat::SRI, true);
-            logger->cout(res.dump());
+            printJSON(res);
         } else {
             notice("Downloaded '%s' to '%s' (hash '%s').",
                 url,

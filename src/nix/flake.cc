@@ -242,7 +242,7 @@ struct CmdFlakeMetadata : FlakeCommand, MixJSON
             j["locks"] = lockedFlake.lockFile.toJSON().first;
             if (auto fingerprint = lockedFlake.getFingerprint(store, fetchSettings))
                 j["fingerprint"] = fingerprint->to_string(HashFormat::Base16, false);
-            logger->cout("%s", j.dump());
+            printJSON(j);
         } else {
             logger->cout(
                 ANSI_BOLD "Resolved URL:" ANSI_NORMAL "  %s",
@@ -905,7 +905,7 @@ struct CmdFlakeInitCommon : virtual Args, EvalCommand
         std::function<void(const SourcePath & from, const fs::path & to)> copyDir;
         copyDir = [&](const SourcePath & from, const fs::path & to)
         {
-            fs::create_directories(to);
+            createDirs(to);
 
             for (auto & [name, entry] : from.readDirectory()) {
                 checkInterrupt();
@@ -1090,19 +1090,21 @@ struct CmdFlakeArchive : FlakeCommand, MixJSON, MixDryRun
             nlohmann::json jsonObj2 = json ? json::object() : nlohmann::json(nullptr);
             for (auto & [inputName, input] : node.inputs) {
                 if (auto inputNode = std::get_if<0>(&input)) {
-                    auto storePath =
-                        dryRun
-                        ? (*inputNode)->lockedRef.input.computeStorePath(*store)
-                        : (*inputNode)->lockedRef.input.fetchToStore(store).first;
-                    if (json) {
-                        auto& jsonObj3 = jsonObj2[inputName];
-                        jsonObj3["path"] = store->printStorePath(storePath);
-                        sources.insert(std::move(storePath));
-                        jsonObj3["inputs"] = traverse(**inputNode);
-                    } else {
-                        sources.insert(std::move(storePath));
-                        traverse(**inputNode);
+                    std::optional<StorePath> storePath;
+                    if (!(*inputNode)->lockedRef.input.isRelative()) {
+                        storePath =
+                            dryRun
+                            ? (*inputNode)->lockedRef.input.computeStorePath(*store)
+                            : (*inputNode)->lockedRef.input.fetchToStore(store).first;
+                        sources.insert(*storePath);
                     }
+                    if (json) {
+                        auto & jsonObj3 = jsonObj2[inputName];
+                        if (storePath)
+                            jsonObj3["path"] = store->printStorePath(*storePath);
+                        jsonObj3["inputs"] = traverse(**inputNode);
+                    } else
+                        traverse(**inputNode);
                 }
             }
             return jsonObj2;
@@ -1113,7 +1115,7 @@ struct CmdFlakeArchive : FlakeCommand, MixJSON, MixDryRun
                 {"path", store->printStorePath(storePath)},
                 {"inputs", traverse(*flake.lockFile.root)},
             };
-            logger->cout("%s", jsonRoot);
+            printJSON(jsonRoot);
         } else {
             traverse(*flake.lockFile.root);
         }
@@ -1327,18 +1329,34 @@ struct CmdFlakeShow : FlakeCommand, MixJSON
                             logger->warn(fmt("%s omitted (use '--all-systems' to show)", concatStringsSep(".", attrPathS)));
                         }
                     } else {
-                        if (visitor.isDerivation())
-                            showDerivation();
-                        else
-                            throw Error("expected a derivation");
+                        try {
+                            if (visitor.isDerivation())
+                                showDerivation();
+                            else
+                                throw Error("expected a derivation");
+                        } catch (IFDError & e) {
+                            if (!json) {
+                                logger->cout(fmt("%s " ANSI_WARNING "omitted due to use of import from derivation" ANSI_NORMAL, headerPrefix));
+                            } else {
+                                logger->warn(fmt("%s omitted due to use of import from derivation", concatStringsSep(".", attrPathS)));
+                            }
+                        }
                     }
                 }
 
                 else if (attrPath.size() > 0 && attrPathS[0] == "hydraJobs") {
-                    if (visitor.isDerivation())
-                        showDerivation();
-                    else
-                        recurse();
+                    try {
+                        if (visitor.isDerivation())
+                            showDerivation();
+                        else
+                            recurse();
+                    } catch (IFDError & e) {
+                        if (!json) {
+                            logger->cout(fmt("%s " ANSI_WARNING "omitted due to use of import from derivation" ANSI_NORMAL, headerPrefix));
+                        } else {
+                            logger->warn(fmt("%s omitted due to use of import from derivation", concatStringsSep(".", attrPathS)));
+                        }
+                    }
                 }
 
                 else if (attrPath.size() > 0 && attrPathS[0] == "legacyPackages") {
@@ -1357,11 +1375,19 @@ struct CmdFlakeShow : FlakeCommand, MixJSON
                             logger->warn(fmt("%s omitted (use '--all-systems' to show)", concatStringsSep(".", attrPathS)));
                         }
                     } else {
-                        if (visitor.isDerivation())
-                            showDerivation();
-                        else if (attrPath.size() <= 2)
-                            // FIXME: handle recurseIntoAttrs
-                            recurse();
+                        try {
+                            if (visitor.isDerivation())
+                                showDerivation();
+                            else if (attrPath.size() <= 2)
+                                // FIXME: handle recurseIntoAttrs
+                                recurse();
+                        } catch (IFDError & e) {
+                            if (!json) {
+                                logger->cout(fmt("%s " ANSI_WARNING "omitted due to use of import from derivation" ANSI_NORMAL, headerPrefix));
+                            } else {
+                                logger->warn(fmt("%s omitted due to use of import from derivation", concatStringsSep(".", attrPathS)));
+                            }
+                        }
                     }
                 }
 
@@ -1425,7 +1451,7 @@ struct CmdFlakeShow : FlakeCommand, MixJSON
 
         auto j = visit(*cache->getRoot(), {}, fmt(ANSI_BOLD "%s" ANSI_NORMAL, flake->flake.lockedRef), "");
         if (json)
-            logger->cout("%s", j.dump());
+            printJSON(j);
     }
 };
 
@@ -1471,7 +1497,7 @@ struct CmdFlakePrefetch : FlakeCommand, MixJSON
             res["hash"] = hash.to_string(HashFormat::SRI, true);
             res["original"] = fetchers::attrsToJSON(resolvedRef.toAttrs());
             res["locked"] = fetchers::attrsToJSON(lockedRef.toAttrs());
-            logger->cout(res.dump());
+            printJSON(res);
         } else {
             notice("Downloaded '%s' to '%s' (hash '%s').",
                 lockedRef.to_string(),

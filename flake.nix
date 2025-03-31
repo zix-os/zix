@@ -1,10 +1,8 @@
 {
   description = "The purely functional package manager";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/release-24.11";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/master";
 
-  inputs.nixpkgs-regression.url = "github:NixOS/nixpkgs/215d4d0fd80ca5163643b03a33fde804a29cc1e2";
-  inputs.nixpkgs-23-11.url = "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446";
   inputs.flake-compat = {
     url = "github:edolstra/flake-compat";
     flake = false;
@@ -29,7 +27,6 @@
     inputs@{
       self,
       nixpkgs,
-      nixpkgs-regression,
       zig,
       ...
     }:
@@ -159,7 +156,6 @@
                 f = import ./packaging/components.nix {
                   inherit (final) lib;
                   inherit officialRelease;
-                  inherit stdenv;
                   pkgs = final;
                   src = self;
                 };
@@ -196,10 +192,10 @@
             else
               prev.pre-commit;
 
-          zig_0_14 =
+          zig_0_15 =
             (prev.zig.overrideAttrs (
               f: p: {
-                version = "0.14.0-git+${inputs.zig.shortRev or "dirty"}";
+                version = "0.15.0-git+${inputs.zig.shortRev or "dirty"}";
                 src = inputs.zig;
 
                 doInstallCheck = false;
@@ -287,13 +283,37 @@
           flatMapAttrs
             (
               {
-                "" = nixpkgsFor.${system}.native;
+                # Run all tests with UBSAN enabled. Running both with ubsan and
+                # without doesn't seem to have much immediate benefit for doubling
+                # the GHA CI workaround.
+                #
+                # TODO: Work toward enabling "address,undefined" if it seems feasible.
+                # This would maybe require dropping Boost coroutines and ignoring intentional
+                # memory leaks with detect_leaks=0.
+                "" = rec {
+                  nixpkgs = nixpkgsFor.${system}.native;
+                  nixComponents = nixpkgs.nixComponents.overrideScope (
+                    nixCompFinal: nixCompPrev: {
+                      mesonComponentOverrides = _finalAttrs: prevAttrs: {
+                        mesonFlags =
+                          (prevAttrs.mesonFlags or [ ])
+                          # TODO: Macos builds instrumented with ubsan take very long
+                          # to run functional tests.
+                          ++ lib.optionals (!nixpkgs.stdenv.hostPlatform.isDarwin) [
+                            (lib.mesonOption "b_sanitize" "undefined")
+                          ];
+                      };
+                    }
+                  );
+                };
               }
               // lib.optionalAttrs (!nixpkgsFor.${system}.native.stdenv.hostPlatform.isDarwin) {
                 # TODO: enable static builds for darwin, blocked on:
                 #       https://github.com/NixOS/nixpkgs/issues/320448
                 # TODO: disabled to speed up GHA CI.
-                #"static-" = nixpkgsFor.${system}.native.pkgsStatic;
+                # "static-" = {
+                #   nixpkgs = nixpkgsFor.${system}.native.pkgsStatic;
+                # };
               }
             )
             (
@@ -426,7 +446,7 @@
 
       devShells =
         let
-          makeShell = import ./packaging/dev-shell.nix { inherit inputs lib devFlake; };
+          makeShell = import ./packaging/dev-shell.nix { inherit lib devFlake; };
           prefixAttrs = prefix: lib.concatMapAttrs (k: v: { "${prefix}-${k}" = v; });
         in
         forAllSystems (

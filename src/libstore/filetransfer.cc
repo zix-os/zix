@@ -21,10 +21,8 @@
 
 #include <curl/curl.h>
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <iostream>
 #include <queue>
 #include <random>
 #include <thread>
@@ -261,7 +259,7 @@ struct curlFileTransfer : public FileTransfer
             return ((TransferItem *) userp)->headerCallback(contents, size, nmemb);
         }
 
-        int progressCallback(double dltotal, double dlnow)
+        int progressCallback(curl_off_t dltotal, curl_off_t dlnow)
         {
             try {
                 act.progress(dlnow, dltotal);
@@ -271,17 +269,17 @@ struct curlFileTransfer : public FileTransfer
             return getInterrupted();
         }
 
-        int silentProgressCallback(double dltotal, double dlnow)
+        int silentProgressCallback(curl_off_t dltotal, curl_off_t dlnow)
         {
             return getInterrupted();
         }
 
-        static int progressCallbackWrapper(void * userp, double dltotal, double dlnow, double ultotal, double ulnow)
+        static int progressCallbackWrapper(void * userp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
         {
             return ((TransferItem *) userp)->progressCallback(dltotal, dlnow);
         }
 
-        static int silentProgressCallbackWrapper(void * userp, double dltotal, double dlnow, double ultotal, double ulnow)
+        static int silentProgressCallbackWrapper(void * userp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t ultotal, curl_off_t ulnow)
         {
             return ((TransferItem *) userp)->silentProgressCallback(dltotal, dlnow);
         }
@@ -536,6 +534,8 @@ struct curlFileTransfer : public FileTransfer
                         warn("%s; retrying from offset %d in %d ms", exc.what(), writtenToSink, ms);
                     else
                         warn("%s; retrying in %d ms", exc.what(), ms);
+                    decompressionSink.reset();
+                    errorSink.reset();
                     embargo = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
                     fileTransfer.enqueueItem(shared_from_this());
                 }

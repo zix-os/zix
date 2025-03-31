@@ -3,7 +3,6 @@
 #include "shared.hh"
 #include "store-api.hh"
 #include "log-store.hh"
-#include "progress-bar.hh"
 
 using namespace nix;
 
@@ -36,7 +35,7 @@ struct CmdLog : InstallableCommand
         // For compat with CLI today, TODO revisit
         auto oneUp = std::visit(overloaded {
             [&](const DerivedPath::Opaque & bo) {
-                return make_ref<SingleDerivedPath>(bo);
+                return make_ref<const SingleDerivedPath>(bo);
             },
             [&](const DerivedPath::Built & bfd) {
                 return bfd.drvPath;
@@ -55,7 +54,7 @@ struct CmdLog : InstallableCommand
 
             auto log = logSub.getBuildLog(path);
             if (!log) continue;
-            stopProgressBar();
+            logger->stop();
             printInfo("got build log for '%s' from '%s'", installable->what(), logSub.getUri());
             writeFull(getStandardOutput(), *log);
             return;
