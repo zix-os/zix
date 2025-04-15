@@ -9,7 +9,7 @@
   officialRelease,
 }:
 let
-  inherit (inputs) nixpkgs nixpkgs-regression;
+  inherit (inputs) nixpkgs;
 
   installScriptFor =
     tarballs:
@@ -85,7 +85,7 @@ in
       } (_: null);
       actualPkgs = lib.concatMapAttrs (
         k: v: if lib.strings.hasPrefix "nix-" k then { ${k} = null; } else { }
-      ) nixpkgsFor.${arbitrarySystem}.native.nixComponents;
+      ) nixpkgsFor.${arbitrarySystem}.native.zixComponents;
       diff = lib.concatStringsSep "\n" (
         lib.concatLists (
           lib.mapAttrsToList (
@@ -254,7 +254,7 @@ in
           # Note: we're filtering out nixos-install-tools because https://github.com/NixOS/nixpkgs/pull/153594#issuecomment-1020530593.
           (
             set -x
-            time nix-env --store dummy:// -f ${nixpkgs-regression} -qaP --drv-path | sort | grep -v nixos-install-tools > packages
+            time nix-env --store dummy:// -f ${nixpkgs} -qaP --drv-path | sort | grep -v nixos-install-tools > packages
             [[ $(sha1sum < packages | cut -c1-40) = e01b031fc9785a572a38be6bc473957e3b6faad7 ]]
           )
           mkdir $out
@@ -270,9 +270,9 @@ in
       );
     };
 
-  metrics.nixpkgs = import "${nixpkgs-regression}/pkgs/top-level/metrics.nix" {
+  metrics.nixpkgs = import "${nixpkgs}/pkgs/top-level/metrics.nix" {
     pkgs = nixpkgsFor.x86_64-linux.native;
-    nixpkgs = nixpkgs-regression;
+    nixpkgs = nixpkgs;
   };
 
   installTests = forAllSystems (

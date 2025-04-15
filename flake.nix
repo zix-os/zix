@@ -274,7 +274,7 @@
                 # memory leaks with detect_leaks=0.
                 "" = rec {
                   nixpkgs = nixpkgsFor.${system}.native;
-                  nixComponents = nixpkgs.nixComponents.overrideScope (
+                  zixComponents = nixpkgs.zixComponents.overrideScope (
                     nixCompFinal: nixCompPrev: {
                       mesonComponentOverrides = _finalAttrs: prevAttrs: {
                         mesonFlags =
@@ -308,7 +308,7 @@
                   }
                 )
               )
-              // lib.optionalAttrs (nixpkgs.stdenv.hostPlatform == nixpkgs.stdenv.buildPlatform) {
+              // lib.optionalAttrs (nixpkgs.nixpkgs.stdenv.hostPlatform == nixpkgs.nixpkgs.stdenv.buildPlatform) {
                 "${nixpkgsPrefix}nix-functional-tests" = nixpkgs.zixComponents.nix-functional-tests;
               }
             )
