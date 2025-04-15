@@ -14,13 +14,12 @@
   # work around https://github.com/NixOS/nix/issues/7730
   inputs.flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
   inputs.git-hooks-nix.inputs.nixpkgs.follows = "nixpkgs";
-  inputs.git-hooks-nix.inputs.nixpkgs-stable.follows = "nixpkgs";
   # work around 7730 and https://github.com/NixOS/nix/issues/7807
   inputs.git-hooks-nix.inputs.flake-compat.follows = "";
   inputs.git-hooks-nix.inputs.gitignore.follows = "";
   inputs.zig = {
-    url = "github:ziglang/zig";
-    flake = false;
+    url = "github:zix-os/zig-flake";
+    inputs.nixpkgs.follows = "/nixpkgs";
   };
 
   outputs =
@@ -120,6 +119,7 @@
                     };
                 overlays = [
                   (overlayFor (pkgs: pkgs.${stdenv}))
+                  zig.overlays.default
                 ];
               }
             );
@@ -191,24 +191,6 @@
                 })
             else
               prev.pre-commit;
-
-          zig_0_15 =
-            (prev.zig.overrideAttrs (
-              f: p: {
-                version = "0.15.0-git+${inputs.zig.shortRev or "dirty"}";
-                src = inputs.zig;
-
-                doInstallCheck = false;
-
-                postBuild = "";
-                postInstall = "";
-
-                outputs = [ "out" ];
-              }
-            )).override
-              {
-                llvmPackages = final.llvmPackages_19;
-              };
         };
 
     in

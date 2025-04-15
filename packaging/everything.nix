@@ -119,11 +119,15 @@ let
   };
 
 in
-(buildEnv {
-  name = "zix-${nix-cli.version}";
-  paths = [
-    nix-cli
-    nix-manual.man
+stdenv.mkDerivation (finalAttrs: {
+  pname = "zix";
+  version = "${nix-cli.version}";
+
+  outputs = [
+    "out"
+    "dev"
+    "doc"
+    "man"
   ];
 
   /**
@@ -236,5 +240,4 @@ in
     description = "The Nix package manager";
     pkgConfigModules = dev.meta.pkgConfigModules;
   };
-
 })

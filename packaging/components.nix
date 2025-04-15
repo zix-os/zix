@@ -24,7 +24,7 @@ let
     meson
     ninja
     pkg-config
-    zig_0_15
+    zig
     ;
 
   mkVersion = baseVersion: rec {
@@ -158,7 +158,7 @@ let
     nativeBuildInputs = [
       meson
       ninja
-      zig_0_15
+      zig
     ] ++ prevAttrs.nativeBuildInputs or [ ];
     mesonCheckFlags = prevAttrs.mesonCheckFlags or [ ] ++ [
       "--print-errorlogs"

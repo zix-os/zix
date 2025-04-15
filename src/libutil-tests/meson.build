@@ -35,7 +35,8 @@ gtest = dependency('gtest', main : true)
 deps_private += gtest
 
 configdata = configuration_data()
-configdata.set_quoted('PACKAGE_VERSION', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_ZIX', meson.project_version())
+configdata.set_quoted('PACKAGE_VERSION_NIX', fs.read('.version').strip().split('\n')[0])
 
 config_h = configure_file(
   configuration : configdata,
