@@ -72,6 +72,11 @@ pub fn registerBuiltins(env: *Env) !void {
     try builtins_set.put("baseNameOf", Value{ .builtin = .{ .name = "baseNameOf", .func = builtinBaseNameOf } });
     try builtins_set.put("dirOf", Value{ .builtin = .{ .name = "dirOf", .func = builtinDirOf } });
 
+    // Fetchers
+    try builtins_set.put("fetchurl", Value{ .builtin = .{ .name = "fetchurl", .func = builtinFetchurl } });
+    try builtins_set.put("fetchTarball", Value{ .builtin = .{ .name = "fetchTarball", .func = builtinFetchTarball } });
+    try builtins_set.put("fetchGit", Value{ .builtin = .{ .name = "fetchGit", .func = builtinFetchGit } });
+
     // JSON
     try builtins_set.put("toJSON", Value{ .builtin = .{ .name = "toJSON", .func = builtinToJSON } });
     try builtins_set.put("fromJSON", Value{ .builtin = .{ .name = "fromJSON", .func = builtinFromJSON } });
@@ -100,7 +105,8 @@ pub fn registerBuiltins(env: *Env) !void {
     try env.define("builtins", Value{ .attrs = .{ .bindings = builtins_set } });
 }
 
-fn builtinToString(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinToString(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
 
     const arg = args[0];
@@ -122,7 +128,8 @@ fn builtinToString(allocator: std.mem.Allocator, args: []Value) !Value {
     }
 }
 
-fn builtinTypeOf(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinTypeOf(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
 
@@ -143,7 +150,8 @@ fn builtinTypeOf(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = type_name };
 }
 
-fn builtinImport(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinImport(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
 
@@ -154,14 +162,16 @@ fn builtinImport(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== List functions ==============
 
-fn builtinLength(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinLength(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
     return Value{ .int = @intCast(args[0].list.len) };
 }
 
-fn builtinHead(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinHead(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
@@ -169,7 +179,8 @@ fn builtinHead(allocator: std.mem.Allocator, args: []Value) !Value {
     return args[0].list[0];
 }
 
-fn builtinTail(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinTail(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
@@ -177,7 +188,8 @@ fn builtinTail(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .list = args[0].list[1..] };
 }
 
-fn builtinElemAt(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinElemAt(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
@@ -187,7 +199,8 @@ fn builtinElemAt(allocator: std.mem.Allocator, args: []Value) !Value {
     return args[0].list[idx];
 }
 
-fn builtinMap(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinMap(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     // map takes a function and a list
     // This is a placeholder - proper implementation needs evaluator access
     _ = allocator;
@@ -197,7 +210,8 @@ fn builtinMap(allocator: std.mem.Allocator, args: []Value) !Value {
     return args[1];
 }
 
-fn builtinFilter(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinFilter(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[1] != .list) return error.TypeError;
@@ -205,14 +219,16 @@ fn builtinFilter(allocator: std.mem.Allocator, args: []Value) !Value {
     return args[1];
 }
 
-fn builtinFoldl(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinFoldl(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 3) return error.InvalidArgCount;
     // builtins.foldl' op init list
     return args[1]; // Return init as placeholder
 }
 
-fn builtinConcatLists(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinConcatLists(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
 
@@ -232,7 +248,8 @@ fn builtinConcatLists(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .list = result };
 }
 
-fn builtinGenList(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinGenList(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[1] != .int) return error.TypeError;
 
@@ -248,7 +265,8 @@ fn builtinGenList(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== Attrset functions ==============
 
-fn builtinAttrNames(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinAttrNames(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .attrs) return error.TypeError;
 
@@ -265,7 +283,8 @@ fn builtinAttrNames(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .list = result };
 }
 
-fn builtinAttrValues(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinAttrValues(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .attrs) return error.TypeError;
 
@@ -282,7 +301,8 @@ fn builtinAttrValues(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .list = result };
 }
 
-fn builtinHasAttr(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinHasAttr(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
@@ -292,7 +312,8 @@ fn builtinHasAttr(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .bool = args[1].attrs.bindings.contains(key) };
 }
 
-fn builtinGetAttr(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinGetAttr(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
@@ -305,7 +326,8 @@ fn builtinGetAttr(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.AttributeNotFound;
 }
 
-fn builtinRemoveAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinRemoveAttrs(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .attrs) return error.TypeError;
     if (args[1] != .list) return error.TypeError;
@@ -328,7 +350,8 @@ fn builtinRemoveAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .attrs = .{ .bindings = new_bindings } };
 }
 
-fn builtinListToAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinListToAttrs(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
 
@@ -345,7 +368,8 @@ fn builtinListToAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .attrs = .{ .bindings = bindings } };
 }
 
-fn builtinIntersectAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIntersectAttrs(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .attrs) return error.TypeError;
     if (args[1] != .attrs) return error.TypeError;
@@ -361,7 +385,8 @@ fn builtinIntersectAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .attrs = .{ .bindings = bindings } };
 }
 
-fn builtinMapAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinMapAttrs(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[1] != .attrs) return error.TypeError;
@@ -371,14 +396,16 @@ fn builtinMapAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== String functions ==============
 
-fn builtinStringLength(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinStringLength(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
     return Value{ .int = @intCast(args[0].string.len) };
 }
 
-fn builtinSubstring(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinSubstring(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 3) return error.InvalidArgCount;
     if (args[0] != .int) return error.TypeError;
     if (args[1] != .int) return error.TypeError;
@@ -394,7 +421,8 @@ fn builtinSubstring(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = try allocator.dupe(u8, str[start..end]) };
 }
 
-fn builtinConcatStrings(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinConcatStrings(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
 
@@ -414,7 +442,8 @@ fn builtinConcatStrings(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = result };
 }
 
-fn builtinConcatStringsSep(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinConcatStringsSep(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
     if (args[1] != .list) return error.TypeError;
@@ -445,7 +474,8 @@ fn builtinConcatStringsSep(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = result };
 }
 
-fn builtinReplaceStrings(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinReplaceStrings(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 3) return error.InvalidArgCount;
     if (args[0] != .list) return error.TypeError;
     if (args[1] != .list) return error.TypeError;
@@ -480,7 +510,8 @@ fn builtinReplaceStrings(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = result };
 }
 
-fn builtinSplit(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinSplit(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
     if (args[1] != .string) return error.TypeError;
@@ -500,49 +531,57 @@ fn builtinSplit(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== Type checking functions ==============
 
-fn builtinIsNull(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsNull(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .null_val };
 }
 
-fn builtinIsFunction(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsFunction(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .lambda or args[0] == .builtin };
 }
 
-fn builtinIsList(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsList(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .list };
 }
 
-fn builtinIsAttrs(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsAttrs(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .attrs };
 }
 
-fn builtinIsString(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsString(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .string };
 }
 
-fn builtinIsInt(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsInt(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .int };
 }
 
-fn builtinIsBool(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsBool(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .bool };
 }
 
-fn builtinIsPath(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinIsPath(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     return Value{ .bool = args[0] == .path };
@@ -550,7 +589,8 @@ fn builtinIsPath(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== Derivation functions ==============
 
-fn builtinDerivation(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinDerivation(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .attrs) return error.TypeError;
 
@@ -610,7 +650,8 @@ fn builtinDerivation(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .attrs = .{ .bindings = result_bindings } };
 }
 
-fn builtinPlaceholder(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinPlaceholder(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
     // Return a placeholder string that will be replaced during build
@@ -621,7 +662,8 @@ fn builtinPlaceholder(allocator: std.mem.Allocator, args: []Value) !Value {
 // NOTE: Path functions are currently stubbed as they require IO handle
 // which the builtins API doesn't support yet
 
-fn builtinPathExists(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinPathExists(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     _ = switch (args[0]) {
@@ -634,7 +676,8 @@ fn builtinPathExists(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .bool = false };
 }
 
-fn builtinReadFile(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinReadFile(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     _ = switch (args[0]) {
@@ -647,7 +690,8 @@ fn builtinReadFile(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.NotImplemented;
 }
 
-fn builtinReadDir(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinReadDir(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     _ = switch (args[0]) {
         .path => |p| p,
@@ -660,14 +704,16 @@ fn builtinReadDir(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .attrs = .{ .bindings = bindings } };
 }
 
-fn builtinToPath(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinToPath(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
     return Value{ .path = args[0].string };
 }
 
-fn builtinBaseNameOf(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinBaseNameOf(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     const path = switch (args[0]) {
@@ -680,7 +726,8 @@ fn builtinBaseNameOf(allocator: std.mem.Allocator, args: []Value) !Value {
     return Value{ .string = basename };
 }
 
-fn builtinDirOf(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinDirOf(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     const path = switch (args[0]) {
         .path => |p| p,
@@ -694,7 +741,8 @@ fn builtinDirOf(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== JSON functions ==============
 
-fn builtinToJSON(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinToJSON(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
 
     var result: std.ArrayList(u8) = .empty;
@@ -757,7 +805,8 @@ fn valueToJson(allocator: std.mem.Allocator, value: Value, result: *std.ArrayLis
     }
 }
 
-fn builtinFromJSON(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinFromJSON(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
 
@@ -798,7 +847,8 @@ fn jsonToValue(allocator: std.mem.Allocator, json: std.json.Value) !Value {
 
 // ============== Math functions ==============
 
-fn builtinAdd(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinAdd(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] == .int and args[1] == .int) {
@@ -807,7 +857,8 @@ fn builtinAdd(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.TypeError;
 }
 
-fn builtinSub(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinSub(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] == .int and args[1] == .int) {
@@ -816,7 +867,8 @@ fn builtinSub(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.TypeError;
 }
 
-fn builtinMul(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinMul(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] == .int and args[1] == .int) {
@@ -825,7 +877,8 @@ fn builtinMul(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.TypeError;
 }
 
-fn builtinDiv(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinDiv(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     if (args[0] == .int and args[1] == .int) {
@@ -837,21 +890,24 @@ fn builtinDiv(allocator: std.mem.Allocator, args: []Value) !Value {
 
 // ============== Misc functions ==============
 
-fn builtinSeq(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinSeq(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     // Force evaluation of first arg (already done), return second
     return args[1];
 }
 
-fn builtinDeepSeq(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinDeepSeq(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
     // Would need to recursively force first arg
     return args[1];
 }
 
-fn builtinTrace(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinTrace(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 2) return error.InvalidArgCount;
 
@@ -864,7 +920,8 @@ fn builtinTrace(allocator: std.mem.Allocator, args: []Value) !Value {
     return args[1];
 }
 
-fn builtinThrow(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinThrow(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
@@ -873,7 +930,8 @@ fn builtinThrow(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.ThrownError;
 }
 
-fn builtinAbort(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinAbort(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     _ = allocator;
     if (args.len != 1) return error.InvalidArgCount;
     if (args[0] != .string) return error.TypeError;
@@ -882,7 +940,8 @@ fn builtinAbort(allocator: std.mem.Allocator, args: []Value) !Value {
     return error.Aborted;
 }
 
-fn builtinTryEval(allocator: std.mem.Allocator, args: []Value) !Value {
+fn builtinTryEval(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
     if (args.len != 1) return error.InvalidArgCount;
 
     // In a proper implementation, this would catch errors during evaluation
@@ -892,4 +951,34 @@ fn builtinTryEval(allocator: std.mem.Allocator, args: []Value) !Value {
     try bindings.put("value", args[0]);
 
     return Value{ .attrs = .{ .bindings = bindings } };
+}
+
+fn builtinFetchurl(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
+    _ = io;
+    _ = allocator;
+    if (args.len != 1) return error.InvalidArgCount;
+
+    std.debug.print("TODO: fetchurl (stubbed)\n", .{});
+    return Value{ .path = "/tmp/stub-fetchurl" };
+}
+
+fn builtinFetchTarball(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
+    _ = io;
+    _ = allocator;
+    if (args.len != 1) return error.InvalidArgCount;
+
+    std.debug.print("TODO: fetchTarball (stubbed)\n", .{});
+    return Value{ .path = "/tmp/stub-fetchtarball" };
+}
+
+fn builtinFetchGit(io: std.Io, allocator: std.mem.Allocator, args: []Value) !Value {
+    _ = io;
+    _ = io;
+    _ = allocator;
+    if (args.len != 1) return error.InvalidArgCount;
+
+    std.debug.print("TODO: fetchGit (stubbed)\n", .{});
+    return Value{ .path = "/tmp/stub-fetchgit" };
 }

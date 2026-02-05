@@ -29,7 +29,7 @@ pub const Value = union(enum) {
 
     pub const Builtin = struct {
         name: []const u8,
-        func: *const fn (allocator: std.mem.Allocator, args: []Value) anyerror!Value,
+        func: *const fn (io: std.Io, allocator: std.mem.Allocator, args: []Value) anyerror!Value,
     };
 
     pub fn print(self: Value, writer: anytype) error{OutOfMemory}!void {
@@ -150,10 +150,11 @@ pub const Env = struct {
 pub const Evaluator = struct {
     allocator: std.mem.Allocator,
     global_env: *Env,
+    io: std.Io,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
         const global_env = try Env.init(allocator, null);
 
         // Register builtins
@@ -162,6 +163,7 @@ pub const Evaluator = struct {
         return Self{
             .allocator = allocator,
             .global_env = global_env,
+            .io = io,
         };
     }
 
@@ -347,7 +349,7 @@ pub const Evaluator = struct {
                     .builtin => |b| {
                         const args = try self.allocator.alloc(Value, 1);
                         args[0] = arg;
-                        return try b.func(self.allocator, args);
+                        return try b.func(self.io, self.allocator, args);
                     },
                     else => return error.NotAFunction,
                 }
@@ -364,15 +366,23 @@ pub const Evaluator = struct {
             },
 
             .let_in => |l| {
+                // Don't deinit let_env - thunks capture it for lazy evaluation
                 const let_env = try Env.init(self.allocator, env);
-                defer let_env.deinit();
 
+                // Nix let bindings are mutually recursive, so first create
+                // thunks for all bindings, then evaluate the body.
                 for (l.bindings) |binding| {
                     if (binding.key.parts.len == 1) {
                         if (binding.key.parts[0] == .ident) {
                             const key = binding.key.parts[0].ident;
-                            const value = try self.evalInEnv(binding.value.*, let_env);
-                            try let_env.define(key, value);
+                            const thunk = try self.allocator.create(Thunk);
+                            thunk.* = Thunk{
+                                .expr = binding.value,
+                                .env = let_env,
+                                .value = null,
+                                .evaluating = false,
+                            };
+                            try let_env.define(key, Value{ .thunk = thunk });
                         }
                     }
                 }
@@ -629,7 +639,7 @@ pub const Evaluator = struct {
             .builtin => |b| {
                 const args = try self.allocator.alloc(Value, 1);
                 args[0] = arg;
-                return try b.func(self.allocator, args);
+                return try b.func(self.io, self.allocator, args);
             },
             else => return error.NotAFunction,
         }
@@ -662,8 +672,9 @@ pub const Evaluator = struct {
 
 test "evaluator basic" {
     const allocator = std.testing.allocator;
+    const io = std.Io.init();
 
-    var evaluator = try Evaluator.init(allocator);
+    var evaluator = try Evaluator.init(allocator, io);
     defer evaluator.deinit();
 
     // Test integer

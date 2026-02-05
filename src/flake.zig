@@ -85,12 +85,12 @@ pub const FlakeEvaluator = struct {
     nix_store: store.Store,
     system: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator) !FlakeEvaluator {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !FlakeEvaluator {
         var fe = FlakeEvaluator{
             .allocator = allocator,
-            .fetcher = Fetcher.init(allocator),
+            .fetcher = Fetcher.init(allocator, io),
             .registry = Registry.init(allocator),
-            .evaluator = try eval.Evaluator.init(allocator),
+            .evaluator = try eval.Evaluator.init(allocator, io),
             .nix_store = store.Store.init(allocator),
             .system = store.getCurrentSystem(),
         };
@@ -175,7 +175,55 @@ pub const FlakeEvaluator = struct {
                     flake.description = try self.allocator.dupe(u8, binding.value.string);
                 }
             } else if (std.mem.eql(u8, key, "inputs")) {
+                // Traditional inputs attribute set
                 try self.parseInputs(&flake, binding.value.*);
+            } else if (std.mem.startsWith(u8, key, "inputs.")) {
+                // Flattened input attribute (e.g., "inputs.nixpkgs.url")
+                // Extract the input name
+                const dot_pos = std.mem.indexOf(u8, key[7..], ".") orelse key[7..].len;
+                const input_name = try self.allocator.dupe(u8, key[7..][0..dot_pos]);
+                errdefer self.allocator.free(input_name);
+
+                // Get or create the input
+                var input_result = try flake.inputs.getOrPut(input_name);
+                if (!input_result.found_existing) {
+                    input_result.value_ptr.* = Flake.FlakeInput{
+                        .ref = FlakeRef.init(self.allocator),
+                        .follows = null,
+                    };
+                }
+
+                // Set the attribute
+                const attr_name = if (dot_pos < key[7..].len) key[7 + dot_pos + 1 ..] else "";
+                if (std.mem.eql(u8, attr_name, "url") and binding.value.* == .string) {
+                    input_result.value_ptr.ref = try FlakeRef.parse(self.allocator, binding.value.string);
+                } else if (std.mem.eql(u8, attr_name, "follows") and binding.value.* == .string) {
+                    var follows: std.ArrayList([]const u8) = .empty;
+                    var parts = std.mem.splitScalar(u8, binding.value.string, '/');
+                    while (parts.next()) |part| {
+                        try follows.append(self.allocator, try self.allocator.dupe(u8, part));
+                    }
+                    input_result.value_ptr.follows = try follows.toOwnedSlice(self.allocator);
+                } else if (attr_name.len == 0 and binding.value.* == .attrs) {
+                    // inputs.nixpkgs = { ... };
+                    // Parse the attribute set
+                    var ref_url: ?[]const u8 = null;
+                    for (binding.value.attrs.bindings) |inner_binding| {
+                        const inner_key = try self.attrPathToString(inner_binding.key);
+                        defer self.allocator.free(inner_key);
+                        if (std.mem.eql(u8, inner_key, "url") and inner_binding.value.* == .string) {
+                            ref_url = inner_binding.value.string;
+                        }
+                    }
+                    if (ref_url) |url| {
+                        input_result.value_ptr.ref = try FlakeRef.parse(self.allocator, url);
+                    }
+                }
+
+                // If no URL was set, use the input name as an indirect ref
+                if (input_result.value_ptr.ref.url.len == 0) {
+                    input_result.value_ptr.ref = try FlakeRef.parse(self.allocator, input_name);
+                }
             } else if (std.mem.eql(u8, key, "outputs")) {
                 flake.outputs_expr = binding.value;
             }
@@ -199,6 +247,8 @@ pub const FlakeEvaluator = struct {
 
     fn parseInputs(self: *FlakeEvaluator, flake: *Flake, expr: Expr) !void {
         if (expr != .attrs) return;
+
+        std.debug.print("Parsing inputs, found {} bindings\n", .{expr.attrs.bindings.len});
 
         for (expr.attrs.bindings) |binding| {
             const name = try self.attrPathToString(binding.key);
@@ -248,7 +298,7 @@ pub const FlakeEvaluator = struct {
     }
 
     /// Resolve all inputs and evaluate the flake
-    pub fn resolve(self: *FlakeEvaluator, flake: Flake) !ResolvedFlake {
+    pub fn resolve(self: *FlakeEvaluator, io: std.Io, flake: Flake, progress_node: std.Progress.Node) !ResolvedFlake {
         var resolved = ResolvedFlake{
             .flake = flake,
             .inputs = std.StringHashMap(ResolvedFlake.ResolvedInput).init(self.allocator),
@@ -256,6 +306,9 @@ pub const FlakeEvaluator = struct {
             .allocator = self.allocator,
         };
         errdefer resolved.deinit();
+
+        const fetch_node = progress_node.start(try std.fmt.allocPrint(self.allocator, "Resolving flake inputs for {s}", .{flake.path}), flake.inputs.count());
+        defer fetch_node.end();
 
         // Resolve each input
         var iter = flake.inputs.iterator();
@@ -278,17 +331,21 @@ pub const FlakeEvaluator = struct {
             }
 
             // Fetch the input
-            var fetch_result = self.fetcher.fetch(&ref, flake.path) catch |err| {
-                std.debug.print("Failed to fetch input {s}: {}\n", .{ input_name, err });
+            var fetch_result = self.fetcher.fetch(io, &ref, flake.path, fetch_node) catch {
+                fetch_node.completeOne();
                 continue;
             };
+            fetch_node.completeOne();
 
             // Load the input as a flake (if it has a flake.nix)
             const input_flake_path = std.fs.path.join(self.allocator, &.{ fetch_result.path, "flake.nix" }) catch continue;
             defer self.allocator.free(input_flake_path);
 
-            // TODO: Check if flake.nix exists with proper IO
-            const has_flake = false;
+            // Check if flake.nix exists
+            const has_flake = blk: {
+                _ = std.Io.Dir.statFile(.cwd(), io, input_flake_path, .{}) catch break :blk false;
+                break :blk true;
+            };
 
             var resolved_input = ResolvedFlake.ResolvedInput{
                 .flake = null,
@@ -297,10 +354,17 @@ pub const FlakeEvaluator = struct {
             };
 
             if (has_flake) {
-                const input_flake = self.loadFlake(fetch_result.path) catch null;
+                const input_flake = self.loadFlakeWithIo(io, fetch_result.path) catch null;
                 if (input_flake) |fl| {
                     const resolved_fl = try self.allocator.create(ResolvedFlake);
-                    resolved_fl.* = try self.resolve(fl);
+                    resolved_fl.* = try self.resolve(io, fl, fetch_node);
+
+                    // Evaluate the input flake's outputs
+                    const input_outputs = self.evalOutputs(resolved_fl) catch null;
+                    if (input_outputs) |outputs| {
+                        resolved_fl.outputs = outputs;
+                    }
+
                     resolved_input.flake = resolved_fl;
                 }
             }
@@ -314,7 +378,8 @@ pub const FlakeEvaluator = struct {
     /// Evaluate the flake outputs
     pub fn evalOutputs(self: *FlakeEvaluator, resolved: *ResolvedFlake) !Value {
         // Build the inputs attrset to pass to the outputs function
-        var inputs_env = try Env.init(self.allocator, null);
+        // Parent must be global_env so builtins like `import` are accessible
+        var inputs_env = try Env.init(self.allocator, self.evaluator.global_env);
         defer inputs_env.deinit();
 
         // Add self
@@ -429,8 +494,15 @@ pub const FlakeEvaluator = struct {
         // Load the flake
         const fl = try self.loadFlakeWithIo(io, flake_path);
 
-        // Resolve inputs
-        var resolved = try self.resolve(fl);
+        // Resolve inputs with progress
+        var resolved = resolve_blk: {
+            var draw_buffer: [4096]u8 = undefined;
+            const progress_root = std.Progress.start(io, .{
+                .draw_buffer = &draw_buffer,
+            });
+            defer progress_root.end();
+            break :resolve_blk try self.resolve(io, fl, progress_root);
+        };
         defer resolved.deinit();
 
         // Evaluate outputs
@@ -487,8 +559,9 @@ pub const FlakeEvaluator = struct {
 
 test "flake evaluator init" {
     const allocator = std.testing.allocator;
+    const io = std.Io.init();
 
-    var fe = try FlakeEvaluator.init(allocator);
+    var fe = try FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     try std.testing.expect(fe.registry.entries.count() > 0);

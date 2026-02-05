@@ -104,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
         .eval => {
             const source = try getSource(allocator, io, input_file);
             defer allocator.free(source);
-            try runEvaluator(allocator, source, input_file);
+            try runEvaluator(allocator, io, source, input_file);
         },
         .build => try runBuild(allocator, io, input_file orelse ".", attr_path),
         .flake_show => try runFlakeShow(allocator, io, input_file orelse "."),
@@ -241,7 +241,7 @@ fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) 
     }
 }
 
-fn runEvaluator(allocator: std.mem.Allocator, source: []const u8, file_path: ?[]const u8) !void {
+fn runEvaluator(allocator: std.mem.Allocator, io: Io, source: []const u8, file_path: ?[]const u8) !void {
     // Parse
     var p = try parser.Parser.init(allocator, source, file_path orelse "<stdin>");
     defer p.deinit();
@@ -249,7 +249,7 @@ fn runEvaluator(allocator: std.mem.Allocator, source: []const u8, file_path: ?[]
     defer ast_expr.deinit(allocator);
 
     // Evaluate
-    var evaluator = try eval.Evaluator.init(allocator);
+    var evaluator = try eval.Evaluator.init(allocator, io);
     defer evaluator.deinit();
 
     const result = try evaluator.eval(ast_expr);
@@ -305,7 +305,7 @@ fn runBuild(allocator: std.mem.Allocator, io: Io, flake_ref: []const u8, attr_pa
     }
     std.debug.print("...\n", .{});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     // Determine the attribute path to build
@@ -327,7 +327,7 @@ fn runBuild(allocator: std.mem.Allocator, io: Io, flake_ref: []const u8, attr_pa
 fn runFlakeShow(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Showing flake outputs for {s}...\n\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -354,10 +354,17 @@ fn runFlakeShow(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
         std.debug.print("\n", .{});
     }
 
-    // Try to evaluate outputs
-    var resolved = fe.resolve(fl) catch |err| {
-        std.debug.print("Failed to resolve flake: {}\n", .{err});
-        return err;
+    // Resolve inputs with progress
+    var resolved = resolve_blk: {
+        var draw_buffer_show: [4096]u8 = undefined;
+        const progress_root_show = std.Progress.start(io, .{
+            .draw_buffer = &draw_buffer_show,
+        });
+        defer progress_root_show.end();
+        break :resolve_blk fe.resolve(io, fl, progress_root_show) catch |err| {
+            std.debug.print("Failed to resolve flake: {}\n", .{err});
+            return err;
+        };
     };
     defer resolved.deinit();
 
@@ -409,7 +416,7 @@ fn printFlakeOutputs(allocator: std.mem.Allocator, bindings: std.StringHashMap(e
 fn runFlakeMetadata(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Flake metadata for {s}\n\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -436,7 +443,7 @@ fn runFlakeMetadata(allocator: std.mem.Allocator, io: Io, path: []const u8) !voi
 fn runFlakeLock(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Updating flake.lock for {s}...\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -445,9 +452,16 @@ fn runFlakeLock(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     };
     defer fl.deinit();
 
-    var resolved = fe.resolve(fl) catch |err| {
-        std.debug.print("Failed to resolve flake: {}\n", .{err});
-        return err;
+    var resolved = resolve_blk: {
+        var draw_buffer_lock: [4096]u8 = undefined;
+        const progress_root_lock = std.Progress.start(io, .{
+            .draw_buffer = &draw_buffer_lock,
+        });
+        defer progress_root_lock.end();
+        break :resolve_blk fe.resolve(io, fl, progress_root_lock) catch |err| {
+            std.debug.print("Failed to resolve flake: {}\n", .{err});
+            return err;
+        };
     };
     defer resolved.deinit();
 
