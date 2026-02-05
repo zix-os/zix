@@ -14,6 +14,8 @@ pub const Parser = struct {
     current: Token,
     peek_token: Token,
     in_string_interpolation: bool,
+    string_interpolation_depth: usize,
+    interpolation_string_depth: usize, // Lexer's string_depth when current interpolation started
 
     const Self = @This();
 
@@ -28,6 +30,8 @@ pub const Parser = struct {
             .current = current,
             .peek_token = peek,
             .in_string_interpolation = false,
+            .string_interpolation_depth = 0,
+            .interpolation_string_depth = 0,
         };
     }
 
@@ -261,8 +265,9 @@ pub const Parser = struct {
                     };
                 },
                 .string_part => {
-                    // Only treat as function application if not inside string interpolation
-                    if (!self.in_string_interpolation) {
+                    // Only treat as function application if not inside string interpolation,
+                    // OR if this is a NEW nested string (depth > our interpolation depth)
+                    if (!self.in_string_interpolation or self.lexer.string_depth > self.interpolation_string_depth) {
                         const arg = try self.parsePrimary();
                         const func_ptr = try self.allocator.create(Expr);
                         func_ptr.* = expr;
@@ -995,21 +1000,32 @@ pub const Parser = struct {
         var parts = std.ArrayList(Expr.StringPart).empty;
         defer parts.deinit(self.allocator);
 
+        // Track our depth for this string
+        self.string_interpolation_depth += 1;
+        defer self.string_interpolation_depth -= 1;
+
         // Add the first literal part (before first ${)
         const first_lit = self.current.value.string;
         if (first_lit.len > 0) {
             try parts.append(self.allocator, .{ .literal = first_lit });
         }
+        // Save the lexer's string depth for this interpolation
+        // (before advancing, while we're still at the string_part token)
+        const my_string_depth = self.lexer.string_depth;
         self.advance();
 
         // Now we've consumed string_part, the next tokens are the expression
         // Parse the expression, then expect string_part or string_end
+        // Save and set flag to prevent parsePostfix from consuming string continuations
         const was_in_interpolation = self.in_string_interpolation;
         self.in_string_interpolation = true;
-        defer self.in_string_interpolation = was_in_interpolation;
+        // Also save the old lexer depth and set the current one
+        const old_interpolation_string_depth = self.interpolation_string_depth;
+        self.interpolation_string_depth = my_string_depth;
+        defer self.interpolation_string_depth = old_interpolation_string_depth;
 
         while (true) {
-            // Parse the interpolated expression (with flag to prevent consuming string continuations)
+            // Parse the interpolated expression (with flag set to prevent consuming string continuations)
             const expr = try self.parseExpr();
             const expr_ptr = try self.allocator.create(Expr);
             expr_ptr.* = expr;
@@ -1024,6 +1040,7 @@ pub const Parser = struct {
                 self.advance();
                 // Continue to next interpolation
             } else if (self.current.kind == .string_end) {
+                // This string_end is for our string (nested strings are fully consumed by their parseInterpolatedString)
                 const lit = self.current.value.string;
                 if (lit.len > 0) {
                     try parts.append(self.allocator, .{ .literal = lit });
@@ -1031,10 +1048,12 @@ pub const Parser = struct {
                 self.advance();
                 break; // Done
             } else {
-                std.debug.print("Expected string_part or string_end after interpolation, got {s}\n", .{@tagName(self.current.kind)});
                 return error.UnexpectedToken;
             }
         }
+
+        // Restore the flag after we're done with this string
+        self.in_string_interpolation = was_in_interpolation;
 
         return Expr{
             .interpolated_string = .{

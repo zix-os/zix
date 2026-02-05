@@ -91,6 +91,7 @@ pub const Lexer = struct {
     string_depth: usize, // > 0 when inside interpolated string
     brace_depth: usize, // Tracks nested braces inside ${}
     allocated_strings: std.ArrayList([]const u8), // Track allocated strings to free
+    in_indented_string: bool, // Track if current string interpolation is in indented string
 
     const Self = @This();
 
@@ -106,6 +107,7 @@ pub const Lexer = struct {
             .string_depth = 0,
             .brace_depth = 0,
             .allocated_strings = .empty,
+            .in_indented_string = false,
         };
     }
 
@@ -117,44 +119,6 @@ pub const Lexer = struct {
     }
 
     pub fn nextToken(self: *Self) !Token {
-        // If we're inside string interpolation and hit }, continue the string
-        if (self.string_depth > 0 and self.brace_depth > 0) {
-            // Track nested braces while skipping whitespace
-            while (self.pos < self.source.len) {
-                const ch = self.source[self.pos];
-                if (ch == ' ' or ch == '\t' or ch == '\r') {
-                    self.advance();
-                } else if (ch == '\n') {
-                    self.advanceLine();
-                } else {
-                    break;
-                }
-            }
-
-            const token_start = self.pos;
-            const token_line = self.line;
-            const token_column = self.column;
-
-            if (self.pos < self.source.len) {
-                const ch = self.source[self.pos];
-                if (ch == '{') {
-                    self.brace_depth += 1;
-                    self.advance();
-                    return Token{ .kind = .lbrace, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
-                } else if (ch == '}') {
-                    self.brace_depth -= 1;
-                    if (self.brace_depth == 0) {
-                        // End of interpolation, continue the string
-                        self.advance();
-                        return try self.lexStringContinue(token_line, token_column, token_start);
-                    } else {
-                        self.advance();
-                        return Token{ .kind = .rbrace, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
-                    }
-                }
-            }
-        }
-
         // Skip whitespace and comments
         while (self.pos < self.source.len) {
             const ch = self.source[self.pos];
@@ -203,6 +167,38 @@ pub const Lexer = struct {
             };
         }
 
+        // Special handling for braces when inside string interpolation
+        if (self.string_depth > 0 and self.brace_depth > 0) {
+            const ch = self.source[self.pos];
+            if (ch == '{') {
+                self.brace_depth += 1;
+                self.advance();
+                return Token{ .kind = .lbrace, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
+            } else if (ch == '}') {
+                self.brace_depth -= 1;
+                if (self.brace_depth == 0) {
+                    // End of interpolation, continue the string
+                    self.advance();
+
+                    const result = if (self.in_indented_string)
+                        try self.lexIndentedStringContinue(token_line, token_column, token_start)
+                    else
+                        try self.lexStringContinue(token_line, token_column, token_start);
+
+                    // After the continuation, restore brace_depth if needed
+                    // The continuation function may have decremented string_depth
+                    if (self.string_depth > 0) {
+                        self.brace_depth = 1;
+                    }
+                    return result;
+                } else {
+                    self.advance();
+                    return Token{ .kind = .rbrace, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
+                }
+            }
+            // For any other token, fall through to normal handling below
+        }
+
         const ch = self.source[self.pos];
 
         // String literals
@@ -211,8 +207,12 @@ pub const Lexer = struct {
         }
 
         // Indented strings
-        if (ch == '\'' and self.peek() == '\'') {
-            return try self.lexIndentedString(token_line, token_column, token_start);
+        if (ch == '\'') {
+            if (self.peek() == '\'') {
+                return try self.lexIndentedString(token_line, token_column, token_start);
+            } else {
+                std.debug.print("Found single quote at pos {d}, peek gives {c}\n", .{ self.pos, self.peek() });
+            }
         }
 
         // Numbers
@@ -291,6 +291,10 @@ pub const Lexer = struct {
         if (ch == '$' and next == '{') {
             self.advance();
             self.advance();
+            // If we're in a string interpolation, increment brace_depth to track this inner `{`
+            if (self.string_depth > 0) {
+                self.brace_depth += 1;
+            }
             return self.makeToken(.dollar_brace, token_line, token_column, token_start);
         }
 
@@ -325,6 +329,8 @@ pub const Lexer = struct {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
 
+        const initial_string_depth = self.string_depth;
+
         self.advance(); // Skip opening "
 
         while (self.pos < self.source.len) {
@@ -333,9 +339,13 @@ pub const Lexer = struct {
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                // If we were in interpolation mode, this ends the string
-                const kind: TokenKind = if (self.string_depth > 0) .string_end else .string;
-                if (self.string_depth > 0) self.string_depth -= 1;
+                // If WE started an interpolation (string_depth > initial), this ends it
+                const had_interpolation = self.string_depth > initial_string_depth;
+                const kind: TokenKind = if (had_interpolation) .string_end else .string;
+                if (had_interpolation) {
+                    self.string_depth -= 1;
+                    if (self.string_depth == 0) self.in_indented_string = false;
+                }
                 return Token{
                     .kind = kind,
                     .value = .{ .string = str },
@@ -348,7 +358,8 @@ pub const Lexer = struct {
             if (ch == '$' and self.peek() == '{') {
                 // Return string so far as string_part, set up state for interpolation
                 self.string_depth += 1;
-                self.brace_depth = 1;
+                self.brace_depth = 1; // Reset to 1 for this interpolation level
+                self.in_indented_string = false;
                 self.advance(); // Skip $
                 self.advance(); // Skip {
                 const str = try buffer.toOwnedSlice(self.allocator);
@@ -403,6 +414,7 @@ pub const Lexer = struct {
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
                 self.string_depth -= 1;
+                if (self.string_depth == 0) self.in_indented_string = false;
                 return Token{
                     .kind = .string_end,
                     .value = .{ .string = str },
@@ -414,7 +426,7 @@ pub const Lexer = struct {
             // Check for another interpolation ${
             if (ch == '$' and self.peek() == '{') {
                 // Return string so far as string_part
-                self.brace_depth = 1;
+                self.brace_depth = 1; // Reset to 1 for this interpolation
                 self.advance(); // Skip $
                 self.advance(); // Skip {
                 const str = try buffer.toOwnedSlice(self.allocator);
@@ -461,6 +473,8 @@ pub const Lexer = struct {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
 
+        const initial_string_depth = self.string_depth;
+
         self.advance(); // Skip first '
         self.advance(); // Skip second '
 
@@ -470,15 +484,90 @@ pub const Lexer = struct {
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
+                // If WE started an interpolation (string_depth > initial), this ends it
+                const had_interpolation = self.string_depth > initial_string_depth;
+                const kind: TokenKind = if (had_interpolation) .string_end else .string;
+                if (had_interpolation) {
+                    self.string_depth -= 1;
+                }
+                // Always reset in_indented_string when an indented string ends
+                self.in_indented_string = false;
                 return Token{
-                    .kind = .string,
+                    .kind = kind,
                     .value = .{ .string = str },
                     .line = line,
                     .column = column,
                     .offset = start,
                 };
             }
+            // Check for interpolation ${
             const ch = self.source[self.pos];
+            if (ch == '$' and self.peek() == '{') {
+                // Return string so far as string_part, set up state for interpolation
+                self.string_depth += 1;
+                self.brace_depth = 1; // Reset to 1 for this interpolation level
+                self.in_indented_string = true;
+                self.advance(); // Skip $
+                self.advance(); // Skip {
+                const str = try buffer.toOwnedSlice(self.allocator);
+                try self.allocated_strings.append(self.allocator, str);
+                return Token{
+                    .kind = .string_part,
+                    .value = .{ .string = str },
+                    .line = line,
+                    .column = column,
+                    .offset = start,
+                };
+            }
+            try buffer.append(self.allocator, ch);
+            if (ch == '\n') {
+                self.advanceLine();
+            } else {
+                self.advance();
+            }
+        }
+        return error.UnterminatedString;
+    }
+
+    /// Continue lexing an indented string after an interpolation expression
+    fn lexIndentedStringContinue(self: *Self, line: usize, column: usize, start: usize) !Token {
+        var buffer: std.ArrayList(u8) = .empty;
+        defer buffer.deinit(self.allocator);
+
+        while (self.pos < self.source.len) {
+            if (self.source[self.pos] == '\'' and self.peek() == '\'') {
+                self.advance();
+                self.advance();
+                const str = try buffer.toOwnedSlice(self.allocator);
+                try self.allocated_strings.append(self.allocator, str);
+                self.string_depth -= 1;
+                // Always reset in_indented_string when an indented string ends
+                self.in_indented_string = false;
+                return Token{
+                    .kind = .string_end,
+                    .value = .{ .string = str },
+                    .line = line,
+                    .column = column,
+                    .offset = start,
+                };
+            }
+            // Check for another interpolation ${
+            const ch = self.source[self.pos];
+            if (ch == '$' and self.peek() == '{') {
+                // Return string so far as string_part
+                self.brace_depth = 1; // Reset to 1 for this interpolation
+                self.advance(); // Skip $
+                self.advance(); // Skip {
+                const str = try buffer.toOwnedSlice(self.allocator);
+                try self.allocated_strings.append(self.allocator, str);
+                return Token{
+                    .kind = .string_part,
+                    .value = .{ .string = str },
+                    .line = line,
+                    .column = column,
+                    .offset = start,
+                };
+            }
             try buffer.append(self.allocator, ch);
             if (ch == '\n') {
                 self.advanceLine();
