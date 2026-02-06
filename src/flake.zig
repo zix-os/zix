@@ -98,9 +98,9 @@ pub const FlakeEvaluator = struct {
     system: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !FlakeEvaluator {
-        const evaluator = try eval.Evaluator.init(allocator, io);
+        var evaluator = try eval.Evaluator.init(allocator, io);
         // Use the evaluator's arena allocator for flake data too
-        const arena_alloc = evaluator.allocator;
+        const arena_alloc = evaluator.alloc();
         var fe = FlakeEvaluator{
             .allocator = arena_alloc,
             .fetcher = Fetcher.init(arena_alloc, io),
@@ -572,7 +572,7 @@ pub const FlakeEvaluator = struct {
         var inputs_env = try self.evaluator.createEnv(self.evaluator.global_env);
 
         // Add self
-        const eval_alloc = self.evaluator.allocator;
+        const eval_alloc = self.evaluator.alloc();
         var self_attrs = std.StringHashMap(Value).init(eval_alloc);
         try self_attrs.put("outPath", Value{ .path = resolved.flake.path });
         try inputs_env.define("self", Value{ .attrs = .{ .bindings = self_attrs } });
@@ -643,7 +643,7 @@ pub const FlakeEvaluator = struct {
     }
 
     fn buildInputsValue(self: *FlakeEvaluator, resolved: *ResolvedFlake) !Value {
-        const eval_alloc = self.evaluator.allocator;
+        const eval_alloc = self.evaluator.alloc();
         var inputs_attrs = std.StringHashMap(Value).init(eval_alloc);
 
         // Add self

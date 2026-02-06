@@ -405,7 +405,6 @@ pub const Parser = struct {
         try self.expect(.lbracket);
 
         var elements = std.ArrayList(Expr).empty;
-        defer elements.deinit(self.allocator);
 
         while (self.current.kind != .rbracket and self.current.kind != .eof) {
             // List elements are "select" expressions (atoms + . selects), not full expressions.
@@ -569,7 +568,6 @@ pub const Parser = struct {
     /// and consumed the first identifier
     fn finishPattern(self: *Self, start: usize, line: usize, column: usize, first_name: []const u8) !Expr {
         var formals = std.ArrayList(Expr.Formal).empty;
-        defer formals.deinit(self.allocator);
 
         // First formal
         var first_default: ?*Expr = null;
