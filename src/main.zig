@@ -19,6 +19,7 @@ pub fn main(init: std.process.Init) !void {
     var mode: Mode = .eval;
     var print_ast = false;
     var attr_path: ?[]const u8 = null;
+    var expr_string: ?[]const u8 = null;
 
     var args_iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
     defer args_iter.deinit();
@@ -74,6 +75,11 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             printHelp();
             return;
+        } else if (std.mem.eql(u8, arg, "--expr")) {
+            expr_string = args_iter.next() orelse {
+                std.debug.print("Error: --expr requires an expression argument\n", .{});
+                return error.InvalidArgument;
+            };
         } else if (std.mem.startsWith(u8, arg, "-") and !std.mem.startsWith(u8, arg, ".")) {
             std.debug.print("Unknown option: {s}\n", .{arg});
             printHelp();
@@ -91,14 +97,19 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var read_buf: [8192]u8 = undefined;
+
+    // TODO: handle non source and return early (repl, build, flake_*)
+
     var source = blk: {
-        if (input_file) |file_path| {
+        if (expr_string) |expr| {
+            break :blk std.Io.Reader.fixed(expr);
+        } else if (input_file) |file_path| {
             // Check if it's a directory (flake)
             const stat = Dir.statFile(.cwd(), io, file_path, .{}) catch {
                 // Try as direct file
                 const file = try Dir.openFile(.cwd(), io, file_path, .{});
                 defer file.close(io);
-                break :blk file.reader(io, &read_buf);
+                break :blk file.readerStreaming(io, &read_buf).interface;
             };
 
             if (stat.kind == .directory) {
@@ -110,28 +121,33 @@ pub fn main(init: std.process.Init) !void {
                     return error.NoDefaultNix;
                 };
                 defer file.close(io);
-                break :blk file.reader(io, &read_buf);
+                break :blk file.readerStreaming(io, &read_buf).interface;
             }
 
             const file = try Dir.openFile(.cwd(), io, file_path, .{});
             defer file.close(io);
-            break :blk file.reader(io, &read_buf);
+            break :blk file.readerStreaming(io, &read_buf).interface;
         } else {
-            // Read from stdin
             const stdin = File.stdin();
-            break :blk stdin.reader(io, &read_buf);
+            const stdin_is_tty = try stdin.isTty(io);
+            if (stdin_is_tty) {
+                printHelp();
+                return;
+            }
+            // Read from stdin
+            break :blk stdin.readerStreaming(io, &read_buf).interface;
         }
     };
 
     switch (mode) {
         .lex => {
-            try runLexer(allocator, &source.interface);
+            try runLexer(allocator, &source);
         },
         .parse => {
-            try runParser(allocator, &source.interface, print_ast);
+            try runParser(allocator, &source, print_ast);
         },
         .eval => {
-            try runEvaluator(allocator, io, &source.interface, input_file);
+            try runEvaluator(allocator, io, &source, input_file);
         },
         .build => try runBuild(allocator, io, input_file orelse ".", attr_path),
         .flake_show => try runFlakeShow(allocator, io, input_file orelse "."),
