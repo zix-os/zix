@@ -242,36 +242,39 @@ fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) 
 }
 
 fn runEvaluator(allocator: std.mem.Allocator, io: Io, source: []const u8, file_path: ?[]const u8) !void {
-    // Parse
-    var p = try parser.Parser.init(allocator, source, file_path orelse "<stdin>");
-    defer p.deinit();
-    const ast_expr = try p.parseExpr();
-    defer ast_expr.deinit(allocator);
-
-    // Evaluate
+    // Create evaluator first so we can use its arena for parsing
     var evaluator = try eval.Evaluator.init(allocator, io);
     defer evaluator.deinit();
 
+    // Parse using arena allocator so AST strings survive
+    var p = try parser.Parser.init(evaluator.allocator, source, file_path orelse "<stdin>");
+    defer p.deinit();
+    const ast_expr = try p.parseExpr();
+
     const result = try evaluator.eval(ast_expr);
-    defer result.deinit(allocator);
+    // Don't deinit result - values are shared across envs/thunks.
+    // The allocator (debug or GPA) will reclaim on process exit.
 
     // Print result
-    printValue(result);
+    // Print result - force thunks for display
+    printValue(result, &evaluator);
     std.debug.print("\n", .{});
 }
 
-fn printValue(value: eval.Value) void {
-    switch (value) {
-        .int => |v| std.debug.print("{}", .{v}),
-        .float => |v| std.debug.print("{d}", .{v}),
-        .bool => |v| std.debug.print("{}", .{v}),
+fn printValue(value: eval.Value, evaluator: ?*eval.Evaluator) void {
+    // Force thunks before printing if we have an evaluator
+    const v = if (value == .thunk and evaluator != null) (evaluator.?.force(value) catch value) else value;
+    switch (v) {
+        .int => |i| std.debug.print("{}", .{i}),
+        .float => |f| std.debug.print("{d}", .{f}),
+        .bool => |b| std.debug.print("{}", .{b}),
         .string => |s| std.debug.print("\"{s}\"", .{s}),
         .path => |p| std.debug.print("{s}", .{p}),
         .null_val => std.debug.print("null", .{}),
         .list => |l| {
             std.debug.print("[ ", .{});
             for (l) |item| {
-                printValue(item);
+                printValue(item, evaluator);
                 std.debug.print(" ", .{});
             }
             std.debug.print("]", .{});
@@ -283,7 +286,7 @@ fn printValue(value: eval.Value) void {
             while (iter.next()) |entry| {
                 if (count > 0) std.debug.print("; ", .{});
                 std.debug.print("{s} = ", .{entry.key_ptr.*});
-                printValue(entry.value_ptr.*);
+                printValue(entry.value_ptr.*, evaluator);
                 count += 1;
                 if (count >= 5) {
                     std.debug.print("; ...", .{});
@@ -407,7 +410,7 @@ fn printFlakeOutputs(allocator: std.mem.Allocator, bindings: std.StringHashMap(e
             std.debug.print("├───{s}: <function>\n", .{key});
         } else {
             std.debug.print("├───{s}: ", .{key});
-            printValue(val);
+            printValue(val, null);
             std.debug.print("\n", .{});
         }
     }

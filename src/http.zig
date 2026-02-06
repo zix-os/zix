@@ -32,6 +32,7 @@ pub const HttpFetcher = struct {
         var response = try request.receiveHead(&redirect_buf);
 
         if (response.head.status != .ok) {
+            std.debug.print("HTTP status: {} for {s}\n", .{ response.head.status, url });
             return error.HttpRequestFailed;
         }
 
@@ -110,7 +111,7 @@ pub const HttpFetcher = struct {
     }
 };
 
-/// Extract tarball to destination directory using std.tar
+/// Extract tarball from a file on disk to destination directory using std.tar
 pub fn extractTarball(allocator: std.mem.Allocator, io: Io, tarball_path: []const u8, dest_dir: []const u8) !void {
     // Create destination directory
     Dir.createDirPath(.cwd(), io, dest_dir) catch {};
@@ -122,16 +123,77 @@ pub fn extractTarball(allocator: std.mem.Allocator, io: Io, tarball_path: []cons
     var read_buf: [8192]u8 = undefined;
     var reader = tarball_file.reader(io, &read_buf);
 
-    // Determine if it's gzipped
-    const is_gzip = std.mem.endsWith(u8, tarball_path, ".gz") or
-        std.mem.endsWith(u8, tarball_path, ".tgz");
+    try extractTarFromReader(allocator, io, &reader.interface, tarball_path, dest_dir);
+}
+
+/// Stream-download a tarball from URL and extract directly to dest_dir without
+/// writing the compressed archive to disk.
+pub fn downloadAndExtractTarball(
+    http_fetcher: *HttpFetcher,
+    io: Io,
+    url: []const u8,
+    dest_dir: []const u8,
+    progress_node: std.Progress.Node,
+) !void {
+    const uri = try std.Uri.parse(url);
+
+    var request = try http_fetcher.client.request(.GET, uri, .{});
+    defer request.deinit();
+
+    try request.sendBodiless();
+    var redirect_buf: [2048]u8 = undefined;
+    var response = try request.receiveHead(&redirect_buf);
+
+    if (response.head.status != .ok) {
+        std.debug.print("HTTP status: {} for {s}\n", .{ response.head.status, url });
+        return error.HttpRequestFailed;
+    }
+
+    const content_length: usize = if (response.head.content_length) |len| len else 0;
+    const node = progress_node.start(std.fs.path.basename(url), content_length);
+    defer node.end();
+
+    Dir.createDirPath(.cwd(), io, dest_dir) catch {};
+
+    var transfer_buf: [65536]u8 = undefined;
+    const reader = response.reader(&transfer_buf);
+
+    try extractTarFromReader(http_fetcher.allocator, io, reader, url, dest_dir);
+}
+
+/// Extract tar entries from an arbitrary Reader interface, auto-detecting
+/// compression (.gz / .xz) from `name_hint` (a filename or URL).
+fn extractTarFromReader(
+    allocator: std.mem.Allocator,
+    io: Io,
+    reader: *std.Io.Reader,
+    name_hint: []const u8,
+    dest_dir: []const u8,
+) !void {
+    // Determine compression type from name hint
+    const is_gzip = std.mem.endsWith(u8, name_hint, ".gz") or
+        std.mem.endsWith(u8, name_hint, ".tgz");
+    const is_xz = std.mem.endsWith(u8, name_hint, ".xz");
 
     if (is_gzip) {
         // Decompress gzip
         var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
-        var decompress = std.compress.flate.Decompress.init(&reader.interface, .gzip, &decompress_buf);
+        var decompress = std.compress.flate.Decompress.init(reader, .gzip, &decompress_buf);
 
-        // Extract tar
+        var file_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var link_name_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var tar = std.tar.Iterator.init(&decompress.reader, .{
+            .file_name_buffer = &file_name_buf,
+            .link_name_buffer = &link_name_buf,
+        });
+        try extractTarIterator(allocator, io, &tar, dest_dir);
+    } else if (is_xz) {
+        // Decompress xz – buffer is heap-allocated since Decompress may resize it
+        const xz_buf = try allocator.alloc(u8, 1 << 16);
+        var decompress = std.compress.xz.Decompress.init(reader, allocator, xz_buf) catch {
+            return error.XzDecompressionFailed;
+        };
+
         var file_name_buf: [std.fs.max_path_bytes]u8 = undefined;
         var link_name_buf: [std.fs.max_path_bytes]u8 = undefined;
         var tar = std.tar.Iterator.init(&decompress.reader, .{
@@ -140,10 +202,10 @@ pub fn extractTarball(allocator: std.mem.Allocator, io: Io, tarball_path: []cons
         });
         try extractTarIterator(allocator, io, &tar, dest_dir);
     } else {
-        // Extract tar directly
+        // Plain tar
         var file_name_buf: [std.fs.max_path_bytes]u8 = undefined;
         var link_name_buf: [std.fs.max_path_bytes]u8 = undefined;
-        var tar = std.tar.Iterator.init(&reader.interface, .{
+        var tar = std.tar.Iterator.init(reader, .{
             .file_name_buffer = &file_name_buf,
             .link_name_buffer = &link_name_buf,
         });

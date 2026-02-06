@@ -262,28 +262,23 @@ pub const Fetcher = struct {
         errdefer self.allocator.free(cache_subdir);
 
         _ = Dir.statFile(.cwd(), io, cache_subdir, .{}) catch {
-            try Dir.createDirPath(.cwd(), io, self.cache_dir);
-
-            const tarball_path = try std.fmt.allocPrint(
-                self.allocator,
-                "{s}.tar.gz",
-                .{cache_subdir},
-            );
-            defer self.allocator.free(tarball_path);
-
-            try self.http_fetcher.downloadFile(io, ref.url, tarball_path, progress_node);
-
             const extract_temp = try std.fmt.allocPrint(
                 self.allocator,
-                "{s}-extract",
-                .{cache_subdir},
+                "{s}/tarball/{x}-extract",
+                .{ self.cache_dir, url_hash },
             );
             defer self.allocator.free(extract_temp);
 
-            Dir.createDirPath(.cwd(), io, extract_temp) catch {};
-            try http.extractTarball(self.allocator, io, tarball_path, extract_temp);
+            // Stream-download and extract directly (no intermediate file)
+            try http.downloadAndExtractTarball(
+                &self.http_fetcher,
+                io,
+                ref.url,
+                extract_temp,
+                progress_node,
+            );
 
-            // Find extracted directory
+            // Tarballs usually have a single top-level directory; hoist it up
             var extract_dir = try Dir.openDir(.cwd(), io, extract_temp, .{ .iterate = true });
             defer extract_dir.close(io);
 
@@ -291,9 +286,8 @@ pub const Fetcher = struct {
             const extracted_name = while (try iter.next(io)) |entry| {
                 if (entry.kind == .directory) break entry.name;
             } else {
-                // No subdirectory, rename temp to cache_subdir
+                // No subdirectory – the temp dir IS the content
                 try Dir.rename(.cwd(), extract_temp, .cwd(), cache_subdir, io);
-                Dir.deleteFile(.cwd(), io, tarball_path) catch {};
                 return FetchResult{
                     .path = cache_subdir,
                     .rev = null,
@@ -308,7 +302,6 @@ pub const Fetcher = struct {
 
             try Dir.rename(.cwd(), extracted_path, .cwd(), cache_subdir, io);
             Dir.deleteTree(.cwd(), io, extract_temp) catch {};
-            Dir.deleteFile(.cwd(), io, tarball_path) catch {};
         };
 
         return FetchResult{

@@ -45,13 +45,47 @@ pub const Parser = struct {
 
     // Pratt parser with binding powers
     fn parseExprBp(self: *Self, min_bp: u8) anyerror!Expr {
-        var left = try self.parsePrimary();
+        var left = try self.parsePostfix(try self.parseSimple());
 
         while (true) {
             const op_info = self.getInfixOp() orelse break;
             if (op_info.left_bp < min_bp) break;
 
             self.advance();
+
+            // Special case: has_attr (?) takes an attrpath on the right, not an expression
+            if (op_info.op == .has_attr) {
+                const attrpath = try self.parseAttrPath();
+                const left_ptr = try self.allocator.create(Expr);
+                left_ptr.* = left;
+                // Encode the attrpath as a string (for simple single-part paths)
+                const right_ptr = try self.allocator.create(Expr);
+                if (attrpath.parts.len == 1) {
+                    switch (attrpath.parts[0]) {
+                        .ident => |id| right_ptr.* = Expr{ .string = id },
+                        .string => |s| right_ptr.* = Expr{ .string = s },
+                        .expr => |e| right_ptr.* = e.*,
+                    }
+                } else {
+                    // Multi-part path — encode as string of first part for now
+                    switch (attrpath.parts[0]) {
+                        .ident => |id| right_ptr.* = Expr{ .string = id },
+                        .string => |s| right_ptr.* = Expr{ .string = s },
+                        .expr => |e| right_ptr.* = e.*,
+                    }
+                }
+
+                left = Expr{
+                    .binary_op = .{
+                        .op = op_info.op,
+                        .left = left_ptr,
+                        .right = right_ptr,
+                        .span = .{ .start = 0, .end = 0, .line = self.current.line, .column = self.current.column },
+                    },
+                };
+                continue;
+            }
+
             const right = try self.parseExprBp(op_info.right_bp);
 
             const left_ptr = try self.allocator.create(Expr);
@@ -100,6 +134,17 @@ pub const Parser = struct {
         };
     }
 
+    /// Parse a "simple" expression: an atom followed by any `.` attribute selects.
+    /// This is used for function application arguments where `.` binds tighter
+    /// than function application, so `f x.a` parses as `f (x.a)`.
+    fn parseSimple(self: *Self) anyerror!Expr {
+        var expr = try self.parsePrimary();
+        while (self.current.kind == .dot) {
+            expr = try self.parseSelect(expr);
+        }
+        return expr;
+    }
+
     fn parsePrimary(self: *Self) anyerror!Expr {
         const start = self.current.offset;
         const line = self.current.line;
@@ -128,6 +173,12 @@ pub const Parser = struct {
             .path => {
                 const val = self.current.value.path;
                 self.advance();
+                // Resolve relative paths (./foo, ../bar) relative to the source file
+                if (std.mem.startsWith(u8, val, "./") or std.mem.startsWith(u8, val, "../")) {
+                    const file_dir = std.fs.path.dirname(self.lexer.filename) orelse ".";
+                    const resolved = std.fs.path.join(self.allocator, &.{ file_dir, val }) catch val;
+                    return Expr{ .path = resolved };
+                }
                 return Expr{ .path = val };
             },
             .uri => {
@@ -171,13 +222,13 @@ pub const Parser = struct {
                     };
                 }
 
-                return try self.parsePostfix(Expr{ .var_ref = name });
+                return Expr{ .var_ref = name };
             },
             .lparen => {
                 self.advance();
                 const expr = try self.parseExpr();
                 try self.expect(.rparen);
-                return try self.parsePostfix(expr);
+                return expr;
             },
             .lbracket => {
                 return try self.parseList(start, line, column);
@@ -190,7 +241,7 @@ pub const Parser = struct {
                 // Recursive attribute set: rec { ... }
                 self.advance();
                 const attrs = try self.parseRecAttrs(start, line, column);
-                return try self.parsePostfix(attrs);
+                return attrs;
             },
             .kw_let => {
                 return try self.parseLet(start, line, column);
@@ -231,10 +282,11 @@ pub const Parser = struct {
                 };
             },
             else => {
-                std.debug.print("Unexpected token: {s} at line {}, column {}\n", .{
+                std.debug.print("Unexpected token: {s} at line {}, column {} in {s}\n", .{
                     @tagName(self.current.kind),
                     self.current.line,
                     self.current.column,
+                    self.lexer.filename,
                 });
                 return error.UnexpectedToken;
             },
@@ -249,9 +301,11 @@ pub const Parser = struct {
                 .dot => {
                     expr = try self.parseSelect(expr);
                 },
-                .lparen, .lbrace, .lbracket, .integer, .float, .string, .path, .identifier => {
-                    // Function application
-                    const arg = try self.parsePrimary();
+                .lparen, .lbrace, .lbracket, .integer, .float, .string, .path, .identifier, .kw_rec => {
+                    // Function application - use parseSimple for args so that
+                    // `.` select binds tighter than application (f x.a = f (x.a))
+                    // and application is left-associative (f x y = (f x) y)
+                    const arg = try self.parseSimple();
                     const func_ptr = try self.allocator.create(Expr);
                     func_ptr.* = expr;
                     const arg_ptr = try self.allocator.create(Expr);
@@ -268,7 +322,7 @@ pub const Parser = struct {
                     // Only treat as function application if not inside string interpolation,
                     // OR if this is a NEW nested string (depth > our interpolation depth)
                     if (!self.in_string_interpolation or self.lexer.string_depth > self.interpolation_string_depth) {
-                        const arg = try self.parsePrimary();
+                        const arg = try self.parseSimple();
                         const func_ptr = try self.allocator.create(Expr);
                         func_ptr.* = expr;
                         const arg_ptr = try self.allocator.create(Expr);
@@ -354,7 +408,10 @@ pub const Parser = struct {
         defer elements.deinit(self.allocator);
 
         while (self.current.kind != .rbracket and self.current.kind != .eof) {
-            try elements.append(self.allocator, try self.parseExpr());
+            // List elements are "select" expressions (atoms + . selects), not full expressions.
+            // So `[ f 1 2 ]` is three elements, not `[ (f 1 2) ]`.
+            // Use parseSimple which handles atoms + dot selects but not function application.
+            try elements.append(self.allocator, try self.parseSimple());
         }
 
         try self.expect(.rbracket);
@@ -463,9 +520,9 @@ pub const Parser = struct {
                 // This is a function pattern
                 return self.finishPattern(start, line, column, first_name);
             } else if (self.current.kind == .eq or self.current.kind == .dot) {
-                // This is an attribute set - wrap with parsePostfix to handle .attr chains
+                // This is an attribute set
                 const attrs = try self.finishAttrs(start, line, column, first_name);
-                return try self.parsePostfix(attrs);
+                return attrs;
             } else {
                 std.debug.print("Expected ',' '?' '=' '.' or '}}' after identifier in braces, got {s} at line {}, column {}\n", .{
                     @tagName(self.current.kind),
@@ -474,26 +531,36 @@ pub const Parser = struct {
                 });
                 return error.UnexpectedToken;
             }
+        } else if (self.current.kind == .kw_or) {
+            // 'or' used as attribute name
+            self.advance();
+            const attrs = try self.finishAttrs(start, line, column, "or");
+            return attrs;
         } else if (self.current.kind == .string) {
             // Strings as keys means attribute set
             const first_name = self.current.value.string;
             self.advance();
             const attrs = try self.finishAttrs(start, line, column, first_name);
-            return try self.parsePostfix(attrs);
+            return attrs;
         } else if (self.current.kind == .string_part) {
             // Interpolated strings as keys means attribute set
             const attrs = try self.finishAttrsNoFirst(start, line, column);
-            return try self.parsePostfix(attrs);
+            return attrs;
         } else if (self.current.kind == .kw_inherit) {
             // inherit means attribute set
             const attrs = try self.finishAttrsNoFirst(start, line, column);
-            return try self.parsePostfix(attrs);
+            return attrs;
+        } else if (self.current.kind == .dollar_brace) {
+            // ${expr} as key means attribute set with dynamic keys
+            const attrs = try self.finishAttrsNoFirst(start, line, column);
+            return attrs;
         }
 
-        std.debug.print("Expected identifier or '}}' in braces, got {s} at line {}, column {}\n", .{
+        std.debug.print("Expected identifier or '}}' in braces, got {s} at line {}, column {} in {s}\n", .{
             @tagName(self.current.kind),
             self.current.line,
             self.current.column,
+            self.lexer.filename,
         });
         return error.UnexpectedToken;
     }
@@ -659,7 +726,7 @@ pub const Parser = struct {
 
         // Parse remaining bindings
         while (self.current.kind != .rbrace and self.current.kind != .eof) {
-            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part) {
+            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part or self.current.kind == .dollar_brace or self.current.kind == .kw_or) {
                 const binding = try self.parseBinding();
                 try bindings.append(self.allocator, binding);
             } else if (self.current.kind == .kw_inherit) {
@@ -688,7 +755,7 @@ pub const Parser = struct {
         defer bindings.deinit(self.allocator);
 
         while (self.current.kind != .rbrace and self.current.kind != .eof) {
-            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part) {
+            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part or self.current.kind == .dollar_brace or self.current.kind == .kw_or) {
                 const binding = try self.parseBinding();
                 try bindings.append(self.allocator, binding);
             } else if (self.current.kind == .kw_inherit) {
@@ -717,7 +784,7 @@ pub const Parser = struct {
         defer bindings.deinit(self.allocator);
 
         while (self.current.kind != .rbrace and self.current.kind != .eof) {
-            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part) {
+            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part or self.current.kind == .dollar_brace or self.current.kind == .kw_or) {
                 const binding = try self.parseBinding();
                 try bindings.append(self.allocator, binding);
             } else if (self.current.kind == .kw_inherit) {
@@ -752,9 +819,24 @@ pub const Parser = struct {
             if (self.current.kind == .identifier) {
                 try parts.append(self.allocator, .{ .ident = self.current.value.identifier });
                 self.advance();
+            } else if (self.current.kind == .kw_or) {
+                try parts.append(self.allocator, .{ .ident = "or" });
+                self.advance();
             } else if (self.current.kind == .string) {
                 try parts.append(self.allocator, .{ .string = self.current.value.string });
                 self.advance();
+            } else if (self.current.kind == .string_part) {
+                const interp = try self.parseInterpolatedString();
+                const expr_ptr = try self.allocator.create(Expr);
+                expr_ptr.* = interp;
+                try parts.append(self.allocator, .{ .expr = expr_ptr });
+            } else if (self.current.kind == .dollar_brace) {
+                self.advance(); // consume ${
+                const expr = try self.parseExpr();
+                try self.expect(.rbrace);
+                const expr_ptr = try self.allocator.create(Expr);
+                expr_ptr.* = expr;
+                try parts.append(self.allocator, .{ .expr = expr_ptr });
             } else {
                 break;
             }
@@ -774,6 +856,39 @@ pub const Parser = struct {
         };
     }
 
+    /// Parse an attribute path: ident.ident.${expr}...
+    fn parseAttrPath(self: *Self) !Expr.AttrPath {
+        var parts = std.ArrayList(Expr.AttrPathPart).empty;
+        defer parts.deinit(self.allocator);
+
+        while (true) {
+            if (self.current.kind == .identifier) {
+                try parts.append(self.allocator, .{ .ident = self.current.value.identifier });
+                self.advance();
+            } else if (self.current.kind == .kw_or) {
+                try parts.append(self.allocator, .{ .ident = "or" });
+                self.advance();
+            } else if (self.current.kind == .string) {
+                try parts.append(self.allocator, .{ .string = self.current.value.string });
+                self.advance();
+            } else if (self.current.kind == .dollar_brace) {
+                self.advance(); // consume ${
+                const expr = try self.parseExpr();
+                try self.expect(.rbrace);
+                const expr_ptr = try self.allocator.create(Expr);
+                expr_ptr.* = expr;
+                try parts.append(self.allocator, .{ .expr = expr_ptr });
+            } else {
+                break;
+            }
+
+            if (self.current.kind != .dot) break;
+            self.advance();
+        }
+
+        return Expr.AttrPath{ .parts = try parts.toOwnedSlice(self.allocator) };
+    }
+
     fn parseAttrs(self: *Self, start: usize, line: usize, column: usize) !Expr {
         try self.expect(.lbrace);
 
@@ -783,7 +898,7 @@ pub const Parser = struct {
         defer bindings.deinit(self.allocator);
 
         while (self.current.kind != .rbrace and self.current.kind != .eof) {
-            if (self.current.kind == .identifier or self.current.kind == .string) {
+            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part or self.current.kind == .dollar_brace or self.current.kind == .kw_or) {
                 const binding = try self.parseBinding();
                 try bindings.append(self.allocator, binding);
             } else if (self.current.kind == .kw_inherit) {
@@ -814,6 +929,10 @@ pub const Parser = struct {
             if (self.current.kind == .identifier) {
                 try parts.append(self.allocator, .{ .ident = self.current.value.identifier });
                 self.advance();
+            } else if (self.current.kind == .kw_or) {
+                // 'or' can be used as an attribute name in Nix
+                try parts.append(self.allocator, .{ .ident = "or" });
+                self.advance();
             } else if (self.current.kind == .string) {
                 try parts.append(self.allocator, .{ .string = self.current.value.string });
                 self.advance();
@@ -822,6 +941,14 @@ pub const Parser = struct {
                 const interp = try self.parseInterpolatedString();
                 const expr_ptr = try self.allocator.create(Expr);
                 expr_ptr.* = interp;
+                try parts.append(self.allocator, .{ .expr = expr_ptr });
+            } else if (self.current.kind == .dollar_brace) {
+                // ${expr} as dynamic key
+                self.advance(); // consume ${
+                const expr = try self.parseExpr();
+                try self.expect(.rbrace);
+                const expr_ptr = try self.allocator.create(Expr);
+                expr_ptr.* = expr;
                 try parts.append(self.allocator, .{ .expr = expr_ptr });
             } else {
                 break;
@@ -852,7 +979,7 @@ pub const Parser = struct {
         defer bindings.deinit(self.allocator);
 
         while (self.current.kind != .kw_in and self.current.kind != .eof) {
-            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part) {
+            if (self.current.kind == .identifier or self.current.kind == .string or self.current.kind == .string_part or self.current.kind == .dollar_brace or self.current.kind == .kw_or) {
                 const binding = try self.parseBinding();
                 try bindings.append(self.allocator, binding);
             } else if (self.current.kind == .kw_inherit) {
@@ -892,8 +1019,14 @@ pub const Parser = struct {
         }
 
         // Parse attribute names to inherit
-        while (self.current.kind == .identifier and self.current.kind != .semicolon) {
-            const name = self.current.value.identifier;
+        // Nix allows identifiers, keywords used as identifiers (or, and), and quoted strings
+        while (self.current.kind != .semicolon and self.current.kind != .rbrace and self.current.kind != .eof) {
+            const name: []const u8 = switch (self.current.kind) {
+                .identifier => self.current.value.identifier,
+                .kw_or => "or",
+                .string => self.current.value.string,
+                else => break,
+            };
             self.advance();
 
             // Create a binding for this inherited attribute
@@ -1048,6 +1181,12 @@ pub const Parser = struct {
                 self.advance();
                 break; // Done
             } else {
+                std.debug.print("parseInterpolatedString: expected string_part or string_end, got {s} at line {}, col {} in {s}\n", .{
+                    @tagName(self.current.kind),
+                    self.current.line,
+                    self.current.column,
+                    self.lexer.filename,
+                });
                 return error.UnexpectedToken;
             }
         }
@@ -1076,11 +1215,12 @@ pub const Parser = struct {
 
     fn expect(self: *Self, kind: TokenKind) !void {
         if (self.current.kind != kind) {
-            std.debug.print("Expected {s}, got {s} at line {}, column {}\n", .{
+            std.debug.print("Expected {s}, got {s} at line {}, column {} in {s}\n", .{
                 @tagName(kind),
                 @tagName(self.current.kind),
                 self.current.line,
                 self.current.column,
+                self.lexer.filename,
             });
             return error.UnexpectedToken;
         }
