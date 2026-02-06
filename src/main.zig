@@ -90,70 +90,54 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    var read_buf: [8192]u8 = undefined;
+    var source = blk: {
+        if (input_file) |file_path| {
+            // Check if it's a directory (flake)
+            const stat = Dir.statFile(.cwd(), io, file_path, .{}) catch {
+                // Try as direct file
+                const file = try Dir.openFile(.cwd(), io, file_path, .{});
+                defer file.close(io);
+                break :blk file.reader(io, &read_buf);
+            };
+
+            if (stat.kind == .directory) {
+                // It's a flake directory
+                const flake_path = try std.fs.path.join(allocator, &.{ file_path, "default.nix" });
+                defer allocator.free(flake_path);
+
+                const file = Dir.openFile(.cwd(), io, flake_path, .{}) catch {
+                    return error.NoDefaultNix;
+                };
+                defer file.close(io);
+                break :blk file.reader(io, &read_buf);
+            }
+
+            const file = try Dir.openFile(.cwd(), io, file_path, .{});
+            defer file.close(io);
+            break :blk file.reader(io, &read_buf);
+        } else {
+            // Read from stdin
+            const stdin = File.stdin();
+            break :blk stdin.reader(io, &read_buf);
+        }
+    };
+
     switch (mode) {
         .lex => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runLexer(allocator, source);
+            try runLexer(allocator, &source.interface);
         },
         .parse => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runParser(allocator, source, print_ast);
+            try runParser(allocator, &source.interface, print_ast);
         },
         .eval => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runEvaluator(allocator, io, source, input_file);
+            try runEvaluator(allocator, io, &source.interface, input_file);
         },
         .build => try runBuild(allocator, io, input_file orelse ".", attr_path),
         .flake_show => try runFlakeShow(allocator, io, input_file orelse "."),
         .flake_metadata => try runFlakeMetadata(allocator, io, input_file orelse "."),
         .flake_lock => try runFlakeLock(allocator, io, input_file orelse "."),
         .repl => try runRepl(allocator, io),
-    }
-}
-
-fn getSource(allocator: std.mem.Allocator, io: Io, input_file: ?[]const u8) ![]u8 {
-    if (input_file) |file_path| {
-        // Check if it's a directory (flake)
-        const stat = Dir.statFile(.cwd(), io, file_path, .{}) catch {
-            // Try as direct file
-            const file = try Dir.openFile(.cwd(), io, file_path, .{});
-            defer file.close(io);
-            var read_buf: [8192]u8 = undefined;
-            var reader = file.reader(io, &read_buf);
-            const len = try file.length(io);
-            return try reader.interface.readAlloc(allocator, @intCast(len));
-        };
-
-        if (stat.kind == .directory) {
-            // It's a flake directory
-            const flake_path = try std.fs.path.join(allocator, &.{ file_path, "default.nix" });
-            defer allocator.free(flake_path);
-
-            const file = Dir.openFile(.cwd(), io, flake_path, .{}) catch {
-                return error.NoDefaultNix;
-            };
-            defer file.close(io);
-            var read_buf: [8192]u8 = undefined;
-            var reader = file.reader(io, &read_buf);
-            const len = try file.length(io);
-            return try reader.interface.readAlloc(allocator, @intCast(len));
-        }
-
-        const file = try Dir.openFile(.cwd(), io, file_path, .{});
-        defer file.close(io);
-        var read_buf: [8192]u8 = undefined;
-        var reader = file.reader(io, &read_buf);
-        const len = try file.length(io);
-        return try reader.interface.readAlloc(allocator, @intCast(len));
-    } else {
-        // Read from stdin
-        const stdin = File.stdin();
-        var read_buf: [65536]u8 = undefined;
-        var reader = stdin.reader(io, &read_buf);
-        return try reader.interface.allocRemaining(allocator, .unlimited);
     }
 }
 
@@ -185,7 +169,7 @@ fn printHelp() void {
         \\
         \\Options:
         \\  --lex        Tokenize and print tokens only
-        \\  --parse      Parse and print AST only  
+        \\  --parse      Parse and print AST only
         \\  --ast        Print AST when evaluating
         \\  -h, --help   Show this help message
         \\
@@ -203,7 +187,7 @@ fn printHelp() void {
     , .{});
 }
 
-fn runLexer(allocator: std.mem.Allocator, source: []const u8) !void {
+fn runLexer(allocator: std.mem.Allocator, source: *std.Io.Reader) !void {
     var lex = lexer.Lexer.init(allocator, source, "<input>");
     defer lex.deinit();
 
@@ -226,7 +210,7 @@ fn runLexer(allocator: std.mem.Allocator, source: []const u8) !void {
     }
 }
 
-fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) !void {
+fn runParser(allocator: std.mem.Allocator, source: *std.Io.Reader, print_ast: bool) !void {
     var p = try parser.Parser.init(allocator, source, "<input>");
     defer p.deinit();
 
@@ -241,7 +225,7 @@ fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) 
     }
 }
 
-fn runEvaluator(allocator: std.mem.Allocator, io: Io, source: []const u8, file_path: ?[]const u8) !void {
+fn runEvaluator(allocator: std.mem.Allocator, io: Io, source: *std.Io.Reader, file_path: ?[]const u8) !void {
     // Create evaluator first so we can use its arena for parsing
     var evaluator = try eval.Evaluator.init(allocator, io);
     defer evaluator.deinit();

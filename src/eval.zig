@@ -817,7 +817,7 @@ pub const Evaluator = struct {
 
 test "evaluator basic" {
     const allocator = std.testing.allocator;
-    const io = std.Io.init();
+    const io = std.Io.Threaded.global_single_threaded.io();
 
     var evaluator = try Evaluator.init(allocator, io);
     defer evaluator.deinit();

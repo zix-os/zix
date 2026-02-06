@@ -24,7 +24,6 @@ pub const Flake = struct {
     input_overrides: std.StringHashMap(std.StringHashMap([]const []const u8)),
     outputs_expr: ?*Expr,
     path: []const u8,
-    source: ?[]const u8, // Keep source alive for AST identifiers
     allocator: std.mem.Allocator,
 
     pub const FlakeInput = struct {
@@ -56,10 +55,8 @@ pub const Flake = struct {
         }
         self.input_overrides.deinit();
         // Don't deinit outputs_expr - it's a borrowed pointer into the parse tree
-        // which shares sub-expressions with other parts of the AST. The source
-        // string (which the AST references) is freed below.
+        // which shares sub-expressions with other parts of the AST.
         self.allocator.free(self.path);
-        if (self.source) |s| self.allocator.free(s);
     }
 };
 
@@ -138,7 +135,6 @@ pub const FlakeEvaluator = struct {
             .input_overrides = std.StringHashMap(std.StringHashMap([]const []const u8)).init(self.allocator),
             .outputs_expr = null,
             .path = try self.allocator.dupe(u8, "."),
-            .source = null,
             .allocator = self.allocator,
         };
 
@@ -156,15 +152,11 @@ pub const FlakeEvaluator = struct {
         const file = try Dir.openFile(.cwd(), io, flake_path, .{});
         defer file.close(io);
 
-        const len = try file.length(io);
         var read_buf: [8192]u8 = undefined;
         var reader = file.reader(io, &read_buf);
-        const source = try reader.interface.readAlloc(self.allocator, @intCast(len));
-        // NOTE: Don't free source! The parsed AST points into it.
-        // The source will be freed when the Flake is deinitialized.
 
         // Parse the flake.nix
-        var p = try parser.Parser.init(self.allocator, source, flake_path);
+        var p = try parser.Parser.init(self.allocator, &reader.interface, flake_path);
         defer p.deinit();
 
         const flake_expr = try p.parseExpr();
@@ -180,7 +172,6 @@ pub const FlakeEvaluator = struct {
             .input_overrides = std.StringHashMap(std.StringHashMap([]const []const u8)).init(self.allocator),
             .outputs_expr = undefined,
             .path = try self.allocator.dupe(u8, path),
-            .source = source,
             .allocator = self.allocator,
         };
         errdefer flake.deinit();
@@ -789,9 +780,9 @@ pub const FlakeEvaluator = struct {
 
 test "flake evaluator init" {
     const allocator = std.testing.allocator;
-    const io = std.Io.init();
+    var io = std.Io.Threaded.init(allocator, .{ .environ = .empty });
 
-    var fe = try FlakeEvaluator.init(allocator, io);
+    var fe = try FlakeEvaluator.init(allocator, io.io());
     defer fe.deinit();
 
     try std.testing.expect(fe.registry.entries.count() > 0);

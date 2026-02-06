@@ -81,7 +81,7 @@ pub const Token = struct {
 
 pub const Lexer = struct {
     allocator: std.mem.Allocator,
-    source: []const u8,
+    source: *std.Io.Reader,
     filename: []const u8,
     pos: usize,
     line: usize,
@@ -99,7 +99,7 @@ pub const Lexer = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, filename: []const u8) Self {
+    pub fn init(allocator: std.mem.Allocator, source: *std.Io.Reader, filename: []const u8) Self {
         return Self{
             .allocator = allocator,
             .source = source,
@@ -116,49 +116,94 @@ pub const Lexer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // Don't free individual strings - they're referenced by the AST.
-        // The arena allocator handles cleanup when the Evaluator is deinitialized.
         self.allocated_strings.deinit(self.allocator);
     }
 
-    /// Check if the current string depth level is in an indented string
     fn isInIndentedString(self: *const Self) bool {
         if (self.string_depth == 0 or self.string_depth >= max_string_depth) return false;
         return self.indented_string_stack[self.string_depth];
     }
 
-    /// Set whether the current string depth level is an indented string
     fn setIndentedString(self: *Self, value: bool) void {
         if (self.string_depth > 0 and self.string_depth < max_string_depth) {
             self.indented_string_stack[self.string_depth] = value;
         }
     }
 
+    // --- Streaming helpers ---
+
+    fn peekSlice(self: *Self, n: usize) ![]u8 {
+        self.source.fill(n) catch |err| switch (err) {
+            error.EndOfStream => {},
+            error.ReadFailed => return error.ReadFailed,
+        };
+        return self.source.buffered();
+    }
+
+    fn currentByte(self: *Self) !?u8 {
+        const byte = self.source.peekByte() catch |err| switch (err) {
+            error.EndOfStream => return null,
+            else => |e| return e,
+        };
+        return byte;
+    }
+
+    fn peekAhead(self: *Self) !u8 {
+        const buf = try self.peekSlice(2);
+        if (buf.len < 2) return 0;
+        return buf[1];
+    }
+
+    fn advance(self: *Self) void {
+        self.source.toss(1);
+        self.pos += 1;
+        self.column += 1;
+    }
+
+    fn advanceLine(self: *Self) void {
+        self.source.toss(1);
+        self.pos += 1;
+        self.line += 1;
+        self.column = 1;
+        self.line_start = self.pos;
+    }
+
+    fn makeToken(self: *Self, kind: TokenKind, line: usize, column: usize, start: usize) Token {
+        _ = self;
+        return Token{
+            .kind = kind,
+            .value = .none,
+            .line = line,
+            .column = column,
+            .offset = start,
+        };
+    }
+
     pub fn nextToken(self: *Self) !Token {
-        // Skip whitespace and comments
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
-            if (ch == ' ' or ch == '\t' or ch == '\r') {
+        while (true) {
+            const wc = try self.currentByte() orelse break;
+            if (wc == ' ' or wc == '\t' or wc == '\r') {
                 self.advance();
-            } else if (ch == '\n') {
+            } else if (wc == '\n') {
                 self.advanceLine();
-            } else if (ch == '#') {
-                // Line comment
+            } else if (wc == '#') {
                 self.advance();
-                while (self.pos < self.source.len and self.source[self.pos] != '\n') {
+                while (true) {
+                    const c = try self.currentByte() orelse break;
+                    if (c == '\n') break;
                     self.advance();
                 }
-            } else if (ch == '/' and self.peek() == '*') {
-                // Block comment
+            } else if (wc == '/' and (try self.peekAhead()) == '*') {
                 self.advance();
                 self.advance();
-                while (self.pos < self.source.len) {
-                    if (self.source[self.pos] == '*' and self.peek() == '/') {
+                while (true) {
+                    const c = try self.currentByte() orelse break;
+                    if (c == '*' and (try self.peekAhead()) == '/') {
                         self.advance();
                         self.advance();
                         break;
                     }
-                    if (self.source[self.pos] == '\n') {
+                    if (c == '\n') {
                         self.advanceLine();
                     } else {
                         self.advance();
@@ -173,19 +218,11 @@ pub const Lexer = struct {
         const token_line = self.line;
         const token_column = self.column;
 
-        if (self.pos >= self.source.len) {
-            return Token{
-                .kind = .eof,
-                .value = .none,
-                .line = token_line,
-                .column = token_column,
-                .offset = token_start,
-            };
-        }
+        const ch = try self.currentByte() orelse {
+            return Token{ .kind = .eof, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
+        };
 
-        // Special handling for braces when inside string interpolation
         if (self.string_depth > 0 and self.brace_depth > 0) {
-            const ch = self.source[self.pos];
             if (ch == '{') {
                 self.brace_depth += 1;
                 self.advance();
@@ -193,16 +230,11 @@ pub const Lexer = struct {
             } else if (ch == '}') {
                 self.brace_depth -= 1;
                 if (self.brace_depth == 0) {
-                    // End of interpolation, continue the string
                     self.advance();
-
                     const result = if (self.isInIndentedString())
                         try self.lexIndentedStringContinue(token_line, token_column, token_start)
                     else
                         try self.lexStringContinue(token_line, token_column, token_start);
-
-                    // After the continuation, restore brace_depth if needed
-                    // The continuation function may have decremented string_depth
                     if (self.string_depth > 0) {
                         self.brace_depth = 1;
                     }
@@ -212,47 +244,22 @@ pub const Lexer = struct {
                     return Token{ .kind = .rbrace, .value = .none, .line = token_line, .column = token_column, .offset = token_start };
                 }
             }
-            // For any other token, fall through to normal handling below
         }
 
-        const ch = self.source[self.pos];
+        if (ch == '"') return try self.lexString(token_line, token_column, token_start);
 
-        // String literals
-        if (ch == '"') {
-            return try self.lexString(token_line, token_column, token_start);
-        }
-
-        // Indented strings
         if (ch == '\'') {
-            if (self.peek() == '\'') {
+            if ((try self.peekAhead()) == '\'') {
                 return try self.lexIndentedString(token_line, token_column, token_start);
-            } else {
-                std.debug.print("Found single quote at pos {d}, peek gives {c}\n", .{ self.pos, self.peek() });
             }
         }
 
-        // Numbers
-        if (std.ascii.isDigit(ch)) {
-            return self.lexNumber(token_line, token_column, token_start);
-        }
+        if (std.ascii.isDigit(ch)) return try self.lexNumber(token_line, token_column, token_start);
+        if (std.ascii.isAlphabetic(ch) or ch == '_') return try self.lexIdentifier(token_line, token_column, token_start);
+        if ((ch == '.' or ch == '/') and (try self.isPathStart())) return try self.lexPath(token_line, token_column, token_start);
+        if (std.ascii.isAlphabetic(ch) and (try self.isUriStart())) return try self.lexUri(token_line, token_column, token_start);
 
-        // Identifiers and keywords
-        if (std.ascii.isAlphabetic(ch) or ch == '_') {
-            return self.lexIdentifier(token_line, token_column, token_start);
-        }
-
-        // Paths (relative or absolute)
-        if ((ch == '.' or ch == '/') and self.isPathStart()) {
-            return try self.lexPath(token_line, token_column, token_start);
-        }
-
-        // URIs
-        if (std.ascii.isAlphabetic(ch) and self.isUriStart()) {
-            return try self.lexUri(token_line, token_column, token_start);
-        }
-
-        // Two-character operators
-        const next = self.peek();
+        const next = try self.peekAhead();
         if (ch == '=' and next == '=') {
             self.advance();
             self.advance();
@@ -298,23 +305,22 @@ pub const Lexer = struct {
             self.advance();
             return self.makeToken(.update, token_line, token_column, token_start);
         }
-        if (ch == '.' and next == '.' and self.pos + 2 < self.source.len and self.source[self.pos + 2] == '.') {
-            self.advance();
-            self.advance();
-            self.advance();
-            return self.makeToken(.ellipsis, token_line, token_column, token_start);
+        if (ch == '.' and next == '.') {
+            const buf = try self.peekSlice(3);
+            if (buf.len >= 3 and buf[2] == '.') {
+                self.advance();
+                self.advance();
+                self.advance();
+                return self.makeToken(.ellipsis, token_line, token_column, token_start);
+            }
         }
         if (ch == '$' and next == '{') {
             self.advance();
             self.advance();
-            // If we're in a string interpolation, increment brace_depth to track this inner `{`
-            if (self.string_depth > 0) {
-                self.brace_depth += 1;
-            }
+            if (self.string_depth > 0) self.brace_depth += 1;
             return self.makeToken(.dollar_brace, token_line, token_column, token_start);
         }
 
-        // Single-character tokens
         self.advance();
         return self.makeToken(switch (ch) {
             '(' => .lparen,
@@ -344,53 +350,33 @@ pub const Lexer = struct {
     fn lexString(self: *Self, line: usize, column: usize, start: usize) !Token {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
-
         const initial_string_depth = self.string_depth;
-
         self.advance(); // Skip opening "
 
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+        while (true) {
+            const ch = try self.currentByte() orelse return error.UnterminatedString;
             if (ch == '"') {
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                // If WE started an interpolation (string_depth > initial), this ends it
                 const had_interpolation = self.string_depth > initial_string_depth;
                 const kind: TokenKind = if (had_interpolation) .string_end else .string;
-                if (had_interpolation) {
-                    self.string_depth -= 1;
-                }
-                return Token{
-                    .kind = kind,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                if (had_interpolation) self.string_depth -= 1;
+                return Token{ .kind = kind, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
-            // Check for interpolation ${
-            if (ch == '$' and self.peek() == '{') {
-                // Return string so far as string_part, set up state for interpolation
+            if (ch == '$' and (try self.peekAhead()) == '{') {
                 self.string_depth += 1;
-                self.brace_depth = 1; // Reset to 1 for this interpolation level
+                self.brace_depth = 1;
                 self.setIndentedString(false);
-                self.advance(); // Skip $
-                self.advance(); // Skip {
+                self.advance();
+                self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                return Token{
-                    .kind = .string_part,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_part, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
             if (ch == '\\') {
                 self.advance();
-                if (self.pos >= self.source.len) return error.UnterminatedString;
-                const escaped = self.source[self.pos];
+                const escaped = try self.currentByte() orelse return error.UnterminatedString;
                 self.advance();
                 try buffer.append(self.allocator, switch (escaped) {
                     'n' => '\n',
@@ -403,60 +389,34 @@ pub const Lexer = struct {
                 });
             } else {
                 try buffer.append(self.allocator, ch);
-                if (ch == '\n') {
-                    self.line += 1;
-                    self.column = 1;
-                    self.line_start = self.pos + 1;
-                    self.pos += 1;
-                } else {
-                    self.advance();
-                }
+                if (ch == '\n') self.advanceLine() else self.advance();
             }
         }
-
-        return error.UnterminatedString;
     }
 
-    /// Continue lexing a string after an interpolation expression
     fn lexStringContinue(self: *Self, line: usize, column: usize, start: usize) !Token {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
-
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+        while (true) {
+            const ch = try self.currentByte() orelse return error.UnterminatedString;
             if (ch == '"') {
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
                 self.string_depth -= 1;
-                return Token{
-                    .kind = .string_end,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_end, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
-            // Check for another interpolation ${
-            if (ch == '$' and self.peek() == '{') {
-                // Return string so far as string_part
-                self.brace_depth = 1; // Reset to 1 for this interpolation
-                self.advance(); // Skip $
-                self.advance(); // Skip {
+            if (ch == '$' and (try self.peekAhead()) == '{') {
+                self.brace_depth = 1;
+                self.advance();
+                self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                return Token{
-                    .kind = .string_part,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_part, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
             if (ch == '\\') {
                 self.advance();
-                if (self.pos >= self.source.len) return error.UnterminatedString;
-                const escaped = self.source[self.pos];
+                const escaped = try self.currentByte() orelse return error.UnterminatedString;
                 self.advance();
                 try buffer.append(self.allocator, switch (escaped) {
                     'n' => '\n',
@@ -469,41 +429,31 @@ pub const Lexer = struct {
                 });
             } else {
                 try buffer.append(self.allocator, ch);
-                if (ch == '\n') {
-                    self.line += 1;
-                    self.column = 1;
-                    self.line_start = self.pos + 1;
-                    self.pos += 1;
-                } else {
-                    self.advance();
-                }
+                if (ch == '\n') self.advanceLine() else self.advance();
             }
         }
-
-        return error.UnterminatedString;
     }
 
     fn lexIndentedString(self: *Self, line: usize, column: usize, start: usize) !Token {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
-
         const initial_string_depth = self.string_depth;
+        self.advance();
+        self.advance(); // Skip ''
 
-        self.advance(); // Skip first '
-        self.advance(); // Skip second '
+        while (true) {
+            const peeked = try self.peekSlice(3);
+            if (peeked.len == 0) return error.UnterminatedString;
 
-        while (self.pos < self.source.len) {
-            if (self.source[self.pos] == '\'' and self.peek() == '\'') {
-                // Check for ''$ (escape for literal ${)
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '$') {
-                    self.advance(); // Skip first '
-                    self.advance(); // Skip second '
+            if (peeked.len >= 2 and peeked[0] == '\'' and peeked[1] == '\'') {
+                if (peeked.len >= 3 and peeked[2] == '$') {
+                    self.advance();
+                    self.advance();
+                    self.advance();
                     try buffer.append(self.allocator, '$');
-                    self.advance(); // Skip $
                     continue;
                 }
-                // Check for ''' (escape for literal '')
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '\'') {
+                if (peeked.len >= 3 and peeked[2] == '\'') {
                     try buffer.append(self.allocator, '\'');
                     try buffer.append(self.allocator, '\'');
                     self.advance();
@@ -511,91 +461,66 @@ pub const Lexer = struct {
                     self.advance();
                     continue;
                 }
-                // Check for ''\\ (escape sequences)
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '\\') {
-                    self.advance(); // Skip first '
-                    self.advance(); // Skip second '
-                    self.advance(); // Skip backslash
-                    if (self.pos < self.source.len) {
-                        const esc = self.source[self.pos];
-                        switch (esc) {
-                            'n' => try buffer.append(self.allocator, '\n'),
-                            'r' => try buffer.append(self.allocator, '\r'),
-                            't' => try buffer.append(self.allocator, '\t'),
-                            else => {
-                                try buffer.append(self.allocator, '\\');
-                                try buffer.append(self.allocator, esc);
-                            },
-                        }
-                        self.advance();
+                if (peeked.len >= 3 and peeked[2] == '\\') {
+                    self.advance();
+                    self.advance();
+                    self.advance();
+                    const esc = try self.currentByte() orelse return error.UnterminatedString;
+                    switch (esc) {
+                        'n' => try buffer.append(self.allocator, '\n'),
+                        'r' => try buffer.append(self.allocator, '\r'),
+                        't' => try buffer.append(self.allocator, '\t'),
+                        else => {
+                            try buffer.append(self.allocator, '\\');
+                            try buffer.append(self.allocator, esc);
+                        },
                     }
+                    self.advance();
                     continue;
                 }
-                // End of indented string ''
                 self.advance();
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                // If WE started an interpolation (string_depth > initial), this ends it
                 const had_interpolation = self.string_depth > initial_string_depth;
                 const kind: TokenKind = if (had_interpolation) .string_end else .string;
-                if (had_interpolation) {
-                    self.string_depth -= 1;
-                }
-                return Token{
-                    .kind = kind,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                if (had_interpolation) self.string_depth -= 1;
+                return Token{ .kind = kind, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
-            // Check for interpolation ${
-            const ch = self.source[self.pos];
-            if (ch == '$' and self.peek() == '{') {
-                // Return string so far as string_part, set up state for interpolation
+
+            if (peeked.len >= 2 and peeked[0] == '$' and peeked[1] == '{') {
                 self.string_depth += 1;
-                self.brace_depth = 1; // Reset to 1 for this interpolation level
+                self.brace_depth = 1;
                 self.setIndentedString(true);
-                self.advance(); // Skip $
-                self.advance(); // Skip {
+                self.advance();
+                self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                return Token{
-                    .kind = .string_part,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_part, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
+
+            const ch = peeked[0];
             try buffer.append(self.allocator, ch);
-            if (ch == '\n') {
-                self.advanceLine();
-            } else {
-                self.advance();
-            }
+            if (ch == '\n') self.advanceLine() else self.advance();
         }
-        return error.UnterminatedString;
     }
 
-    /// Continue lexing an indented string after an interpolation expression
     fn lexIndentedStringContinue(self: *Self, line: usize, column: usize, start: usize) !Token {
         var buffer: std.ArrayList(u8) = .empty;
         defer buffer.deinit(self.allocator);
+        while (true) {
+            const peeked = try self.peekSlice(3);
+            if (peeked.len == 0) return error.UnterminatedString;
 
-        while (self.pos < self.source.len) {
-            if (self.source[self.pos] == '\'' and self.peek() == '\'') {
-                // Check for ''$ (escape for literal ${)
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '$') {
+            if (peeked.len >= 2 and peeked[0] == '\'' and peeked[1] == '\'') {
+                if (peeked.len >= 3 and peeked[2] == '$') {
+                    self.advance();
                     self.advance();
                     self.advance();
                     try buffer.append(self.allocator, '$');
-                    self.advance();
                     continue;
                 }
-                // Check for ''' (escape for literal '')
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '\'') {
+                if (peeked.len >= 3 and peeked[2] == '\'') {
                     try buffer.append(self.allocator, '\'');
                     try buffer.append(self.allocator, '\'');
                     self.advance();
@@ -603,288 +528,180 @@ pub const Lexer = struct {
                     self.advance();
                     continue;
                 }
-                // Check for ''\\ (escape sequences)
-                if (self.pos + 2 < self.source.len and self.source[self.pos + 2] == '\\') {
+                if (peeked.len >= 3 and peeked[2] == '\\') {
                     self.advance();
                     self.advance();
                     self.advance();
-                    if (self.pos < self.source.len) {
-                        const esc = self.source[self.pos];
-                        switch (esc) {
-                            'n' => try buffer.append(self.allocator, '\n'),
-                            'r' => try buffer.append(self.allocator, '\r'),
-                            't' => try buffer.append(self.allocator, '\t'),
-                            else => {
-                                try buffer.append(self.allocator, '\\');
-                                try buffer.append(self.allocator, esc);
-                            },
-                        }
-                        self.advance();
+                    const esc = try self.currentByte() orelse return error.UnterminatedString;
+                    switch (esc) {
+                        'n' => try buffer.append(self.allocator, '\n'),
+                        'r' => try buffer.append(self.allocator, '\r'),
+                        't' => try buffer.append(self.allocator, '\t'),
+                        else => {
+                            try buffer.append(self.allocator, '\\');
+                            try buffer.append(self.allocator, esc);
+                        },
                     }
+                    self.advance();
                     continue;
                 }
-                // End of indented string ''
                 self.advance();
                 self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
                 self.string_depth -= 1;
-                return Token{
-                    .kind = .string_end,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_end, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
-            // Check for another interpolation ${
-            const ch = self.source[self.pos];
-            if (ch == '$' and self.peek() == '{') {
-                // Return string so far as string_part
-                self.brace_depth = 1; // Reset to 1 for this interpolation
-                self.advance(); // Skip $
-                self.advance(); // Skip {
+
+            if (peeked.len >= 2 and peeked[0] == '$' and peeked[1] == '{') {
+                self.brace_depth = 1;
+                self.advance();
+                self.advance();
                 const str = try buffer.toOwnedSlice(self.allocator);
                 try self.allocated_strings.append(self.allocator, str);
-                return Token{
-                    .kind = .string_part,
-                    .value = .{ .string = str },
-                    .line = line,
-                    .column = column,
-                    .offset = start,
-                };
+                return Token{ .kind = .string_part, .value = .{ .string = str }, .line = line, .column = column, .offset = start };
             }
+
+            const ch = peeked[0];
             try buffer.append(self.allocator, ch);
-            if (ch == '\n') {
-                self.advanceLine();
-            } else {
-                self.advance();
-            }
+            if (ch == '\n') self.advanceLine() else self.advance();
         }
-        return error.UnterminatedString;
     }
 
-    fn lexNumber(self: *Self, line: usize, column: usize, start: usize) Token {
+    fn lexNumber(self: *Self, line: usize, column: usize, start: usize) !Token {
+        var num_buf: std.ArrayList(u8) = .empty;
+        defer num_buf.deinit(self.allocator);
         var is_float = false;
 
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+        while (true) {
+            const ch = try self.currentByte() orelse break;
             if (std.ascii.isDigit(ch)) {
+                try num_buf.append(self.allocator, ch);
                 self.advance();
-            } else if (ch == '.' and !is_float and self.pos + 1 < self.source.len and
-                std.ascii.isDigit(self.source[self.pos + 1]))
-            {
-                is_float = true;
-                self.advance();
+            } else if (ch == '.' and !is_float) {
+                const nxt = try self.peekAhead();
+                if (std.ascii.isDigit(nxt)) {
+                    is_float = true;
+                    try num_buf.append(self.allocator, ch);
+                    self.advance();
+                } else break;
             } else if ((ch == 'e' or ch == 'E') and !is_float) {
                 is_float = true;
+                try num_buf.append(self.allocator, ch);
                 self.advance();
-                if (self.pos < self.source.len and (self.source[self.pos] == '+' or self.source[self.pos] == '-')) {
+                const sign = try self.currentByte();
+                if (sign != null and (sign.? == '+' or sign.? == '-')) {
+                    try num_buf.append(self.allocator, sign.?);
                     self.advance();
                 }
-            } else {
-                break;
-            }
+            } else break;
         }
 
-        const text = self.source[start..self.pos];
-
+        const text = num_buf.items;
         if (is_float) {
             const val = std.fmt.parseFloat(f64, text) catch 0.0;
-            return Token{
-                .kind = .float,
-                .value = .{ .float = val },
-                .line = line,
-                .column = column,
-                .offset = start,
-            };
+            return Token{ .kind = .float, .value = .{ .float = val }, .line = line, .column = column, .offset = start };
         } else {
             const val = std.fmt.parseInt(i64, text, 10) catch 0;
-            return Token{
-                .kind = .integer,
-                .value = .{ .integer = val },
-                .line = line,
-                .column = column,
-                .offset = start,
-            };
+            return Token{ .kind = .integer, .value = .{ .integer = val }, .line = line, .column = column, .offset = start };
         }
     }
 
-    fn lexIdentifier(self: *Self, line: usize, column: usize, start: usize) Token {
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+    fn lexIdentifier(self: *Self, line: usize, column: usize, start: usize) !Token {
+        var id_buf: std.ArrayList(u8) = .empty;
+        defer id_buf.deinit(self.allocator);
+
+        while (true) {
+            const ch = try self.currentByte() orelse break;
             if (std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '-' or ch == '\'') {
+                try id_buf.append(self.allocator, ch);
                 self.advance();
-            } else {
-                break;
-            }
+            } else break;
         }
 
-        const text = self.source[start..self.pos];
+        const text = id_buf.items;
+        const kind: TokenKind = if (std.mem.eql(u8, text, "if")) .kw_if else if (std.mem.eql(u8, text, "then")) .kw_then else if (std.mem.eql(u8, text, "else")) .kw_else else if (std.mem.eql(u8, text, "assert")) .kw_assert else if (std.mem.eql(u8, text, "with")) .kw_with else if (std.mem.eql(u8, text, "let")) .kw_let else if (std.mem.eql(u8, text, "in")) .kw_in else if (std.mem.eql(u8, text, "rec")) .kw_rec else if (std.mem.eql(u8, text, "inherit")) .kw_inherit else if (std.mem.eql(u8, text, "or")) .kw_or else .identifier;
 
-        const kind: TokenKind = if (std.mem.eql(u8, text, "if"))
-            .kw_if
-        else if (std.mem.eql(u8, text, "then"))
-            .kw_then
-        else if (std.mem.eql(u8, text, "else"))
-            .kw_else
-        else if (std.mem.eql(u8, text, "assert"))
-            .kw_assert
-        else if (std.mem.eql(u8, text, "with"))
-            .kw_with
-        else if (std.mem.eql(u8, text, "let"))
-            .kw_let
-        else if (std.mem.eql(u8, text, "in"))
-            .kw_in
-        else if (std.mem.eql(u8, text, "rec"))
-            .kw_rec
-        else if (std.mem.eql(u8, text, "inherit"))
-            .kw_inherit
-        else if (std.mem.eql(u8, text, "or"))
-            .kw_or
-        else
-            .identifier;
-
-        return Token{
-            .kind = kind,
-            .value = if (kind == .identifier) .{ .identifier = text } else .none,
-            .line = line,
-            .column = column,
-            .offset = start,
-        };
+        if (kind == .identifier) {
+            const owned = try self.allocator.dupe(u8, text);
+            try self.allocated_strings.append(self.allocator, owned);
+            return Token{ .kind = .identifier, .value = .{ .identifier = owned }, .line = line, .column = column, .offset = start };
+        }
+        return Token{ .kind = kind, .value = .none, .line = line, .column = column, .offset = start };
     }
 
     fn lexPath(self: *Self, line: usize, column: usize, start: usize) !Token {
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
-            if (std.ascii.isAlphanumeric(ch) or ch == '/' or ch == '.' or
-                ch == '_' or ch == '-' or ch == '+')
-            {
+        var path_buf: std.ArrayList(u8) = .empty;
+        defer path_buf.deinit(self.allocator);
+        while (true) {
+            const ch = try self.currentByte() orelse break;
+            if (std.ascii.isAlphanumeric(ch) or ch == '/' or ch == '.' or ch == '_' or ch == '-' or ch == '+') {
+                try path_buf.append(self.allocator, ch);
                 self.advance();
-            } else {
-                break;
-            }
+            } else break;
         }
-
-        const text = self.source[start..self.pos];
-        const path = try self.allocator.dupe(u8, text);
+        const path = try path_buf.toOwnedSlice(self.allocator);
         try self.allocated_strings.append(self.allocator, path);
-
-        return Token{
-            .kind = .path,
-            .value = .{ .path = path },
-            .line = line,
-            .column = column,
-            .offset = start,
-        };
+        return Token{ .kind = .path, .value = .{ .path = path }, .line = line, .column = column, .offset = start };
     }
 
     fn lexUri(self: *Self, line: usize, column: usize, start: usize) !Token {
-        // Scheme
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+        var uri_buf: std.ArrayList(u8) = .empty;
+        defer uri_buf.deinit(self.allocator);
+        while (true) {
+            const ch = try self.currentByte() orelse break;
             if (std.ascii.isAlphanumeric(ch) or ch == '+' or ch == '-' or ch == '.') {
+                try uri_buf.append(self.allocator, ch);
                 self.advance();
             } else if (ch == ':') {
+                try uri_buf.append(self.allocator, ch);
                 self.advance();
                 break;
-            } else {
-                break;
-            }
+            } else break;
         }
-
-        // Rest of URI
-        while (self.pos < self.source.len) {
-            const ch = self.source[self.pos];
+        while (true) {
+            const ch = try self.currentByte() orelse break;
             if (std.ascii.isAlphanumeric(ch) or ch == '%' or ch == '/' or ch == '?' or
                 ch == ':' or ch == '@' or ch == '&' or ch == '=' or ch == '+' or
                 ch == '$' or ch == ',' or ch == '-' or ch == '_' or ch == '.' or
                 ch == '!' or ch == '~' or ch == '*' or ch == '\'' or ch == '(' or ch == ')')
             {
+                try uri_buf.append(self.allocator, ch);
                 self.advance();
-            } else {
-                break;
-            }
+            } else break;
         }
-
-        const text = self.source[start..self.pos];
-        const uri = try self.allocator.dupe(u8, text);
+        const uri = try uri_buf.toOwnedSlice(self.allocator);
         try self.allocated_strings.append(self.allocator, uri);
-
-        return Token{
-            .kind = .uri,
-            .value = .{ .uri = uri },
-            .line = line,
-            .column = column,
-            .offset = start,
-        };
+        return Token{ .kind = .uri, .value = .{ .uri = uri }, .line = line, .column = column, .offset = start };
     }
 
-    fn isPathStart(self: *Self) bool {
-        const ch = self.source[self.pos];
-        // A single '/' is the division operator, not a path
-        // Paths must be like /foo or ./ or ../
-        if (ch == '/' and self.pos + 1 < self.source.len) {
-            const next = self.source[self.pos + 1];
-            return std.ascii.isAlphanumeric(next) or next == '_' or next == '-' or next == '.';
+    fn isPathStart(self: *Self) !bool {
+        const buf = try self.peekSlice(3);
+        if (buf.len == 0) return false;
+        const ch = buf[0];
+        if (ch == '/' and buf.len >= 2) {
+            const nxt = buf[1];
+            return std.ascii.isAlphanumeric(nxt) or nxt == '_' or nxt == '-' or nxt == '.';
         }
-        if (ch == '.' and self.pos + 1 < self.source.len) {
-            const next = self.source[self.pos + 1];
-            // Exclude `...` (ellipsis) - it's not a path
-            if (next == '.' and self.pos + 2 < self.source.len and self.source[self.pos + 2] == '.') {
-                return false;
-            }
-            return next == '/' or next == '.';
+        if (ch == '.' and buf.len >= 2) {
+            const nxt = buf[1];
+            if (nxt == '.' and buf.len >= 3 and buf[2] == '.') return false;
+            return nxt == '/' or nxt == '.';
         }
         return false;
     }
 
-    fn isUriStart(self: *Self) bool {
-        var i = self.pos;
-        // Check for scheme like http:// or https://
-        while (i < self.source.len) {
-            const ch = self.source[i];
-            if (ch == ':') {
-                return i > self.pos and i + 2 < self.source.len and
-                    self.source[i + 1] == '/' and self.source[i + 2] == '/';
-            }
-            if (!std.ascii.isAlphanumeric(ch) and ch != '+' and ch != '-' and ch != '.') {
-                return false;
-            }
-            i += 1;
-            if (i - self.pos > 20) return false; // Reasonable scheme length limit
+    fn isUriStart(self: *Self) !bool {
+        const buf = try self.peekSlice(23);
+        if (buf.len == 0) return false;
+        var i: usize = 0;
+        while (i < buf.len) : (i += 1) {
+            const ch = buf[i];
+            if (ch == ':') return i > 0 and i + 2 < buf.len and buf[i + 1] == '/' and buf[i + 2] == '/';
+            if (!std.ascii.isAlphanumeric(ch) and ch != '+' and ch != '-' and ch != '.') return false;
+            if (i > 20) return false;
         }
         return false;
-    }
-
-    fn makeToken(self: *Self, kind: TokenKind, line: usize, column: usize, start: usize) Token {
-        _ = self;
-        return Token{
-            .kind = kind,
-            .value = .none,
-            .line = line,
-            .column = column,
-            .offset = start,
-        };
-    }
-
-    fn advance(self: *Self) void {
-        self.pos += 1;
-        self.column += 1;
-    }
-
-    fn advanceLine(self: *Self) void {
-        self.pos += 1;
-        self.line += 1;
-        self.column = 1;
-        self.line_start = self.pos;
-    }
-
-    fn peek(self: *Self) u8 {
-        if (self.pos + 1 < self.source.len) {
-            return self.source[self.pos + 1];
-        }
-        return 0;
     }
 };
 
@@ -892,15 +709,14 @@ pub const Lexer = struct {
 test "lexer basic tokens" {
     const allocator = std.testing.allocator;
     const source = "( ) { } [ ] ; : , . = + - * /";
-    var lex = Lexer.init(allocator, source, "test");
+    var reader = std.Io.Reader.fixed(source);
+    var lex = Lexer.init(allocator, &reader, "test");
     defer lex.deinit();
-
     const expected = [_]TokenKind{
         .lparen,    .rparen, .lbrace, .rbrace, .lbracket, .rbracket,
         .semicolon, .colon,  .comma,  .dot,    .eq,       .plus,
         .minus,     .star,   .slash,
     };
-
     for (expected) |kind| {
         const token = try lex.nextToken();
         try std.testing.expectEqual(kind, token.kind);
@@ -910,16 +726,14 @@ test "lexer basic tokens" {
 test "lexer numbers" {
     const allocator = std.testing.allocator;
     const source = "42 3.14 1e10";
-    var lex = Lexer.init(allocator, source, "test");
+    var reader = std.Io.Reader.fixed(source);
+    var lex = Lexer.init(allocator, &reader, "test");
     defer lex.deinit();
-
     const tok1 = try lex.nextToken();
     try std.testing.expectEqual(TokenKind.integer, tok1.kind);
     try std.testing.expectEqual(@as(i64, 42), tok1.value.integer);
-
     const tok2 = try lex.nextToken();
     try std.testing.expectEqual(TokenKind.float, tok2.kind);
-
     const tok3 = try lex.nextToken();
     try std.testing.expectEqual(TokenKind.float, tok3.kind);
 }
@@ -927,9 +741,9 @@ test "lexer numbers" {
 test "lexer keywords" {
     const allocator = std.testing.allocator;
     const source = "if then else let in rec";
-    var lex = Lexer.init(allocator, source, "test");
+    var reader = std.Io.Reader.fixed(source);
+    var lex = Lexer.init(allocator, &reader, "test");
     defer lex.deinit();
-
     try std.testing.expectEqual(TokenKind.kw_if, (try lex.nextToken()).kind);
     try std.testing.expectEqual(TokenKind.kw_then, (try lex.nextToken()).kind);
     try std.testing.expectEqual(TokenKind.kw_else, (try lex.nextToken()).kind);

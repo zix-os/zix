@@ -241,16 +241,11 @@ fn builtinImport(eval_ctx: ?*Evaluator, io: std.Io, allocator: std.mem.Allocator
     };
     defer file.close(io);
 
-    const len = file.length(io) catch return error.FileNotFound;
     var read_buf: [8192]u8 = undefined;
     var reader = file.reader(io, &read_buf);
-    const source = reader.interface.readAlloc(allocator, @intCast(len)) catch {
-        return error.FileNotFound;
-    };
-    // Source needs to stay alive for AST references
 
     // Parse the file
-    var p = parser.Parser.init(allocator, source, file_path) catch {
+    var p = parser.Parser.init(allocator, &reader.interface, file_path) catch {
         return error.ParseError;
     };
     defer p.deinit();

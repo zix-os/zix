@@ -19,7 +19,7 @@ pub const Parser = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, filename: []const u8) !Self {
+    pub fn init(allocator: std.mem.Allocator, source: *std.Io.Reader, filename: []const u8) !Self {
         var lex = Lexer.init(allocator, source, filename);
         const current = try lex.nextToken();
         const peek = try lex.nextToken();
@@ -1233,7 +1233,8 @@ test "parser basic expressions" {
 
     // Test integer
     {
-        var p = try Parser.init(allocator, "42", "test");
+        var reader = std.Io.Reader.fixed("42");
+        var p = try Parser.init(allocator, &reader, "test");
         defer p.deinit();
         const expr = try p.parseExpr();
         try std.testing.expectEqual(@as(i64, 42), expr.int);
@@ -1241,7 +1242,8 @@ test "parser basic expressions" {
 
     // Test simple arithmetic
     {
-        var p = try Parser.init(allocator, "1 + 2", "test");
+        var reader = std.Io.Reader.fixed("1 + 2");
+        var p = try Parser.init(allocator, &reader, "test");
         defer p.deinit();
         const expr = try p.parseExpr();
         defer expr.deinit(allocator);
@@ -1250,7 +1252,8 @@ test "parser basic expressions" {
 
     // Test list
     {
-        var p = try Parser.init(allocator, "[ 1 2 3 ]", "test");
+        var reader = std.Io.Reader.fixed("[ 1 2 3 ]");
+        var p = try Parser.init(allocator, &reader, "test");
         defer p.deinit();
         const expr = try p.parseExpr();
         defer expr.deinit(allocator);
