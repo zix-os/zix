@@ -29,7 +29,9 @@ pub const Value = union(enum) {
 
     pub const Builtin = struct {
         name: []const u8,
-        func: *const fn (allocator: std.mem.Allocator, args: []Value) anyerror!Value,
+        func: *const fn (eval_ctx: ?*Evaluator, io: std.Io, allocator: std.mem.Allocator, args: []Value) anyerror!Value,
+        arity: u8 = 1,
+        partial_args: ?[]Value = null,
     };
 
     pub fn print(self: Value, writer: anytype) error{OutOfMemory}!void {
@@ -65,39 +67,10 @@ pub const Value = union(enum) {
     }
 
     pub fn deinit(self: Value, allocator: std.mem.Allocator) void {
-        switch (self) {
-            .int, .float, .bool, .null_val => {},
-            // string and path are slices into source, don't free
-            .string, .path => {},
-            .list => |l| {
-                for (l) |elem| {
-                    elem.deinit(allocator);
-                }
-                allocator.free(l);
-            },
-            .attrs => |a| {
-                var iter = a.bindings.iterator();
-                while (iter.next()) |entry| {
-                    entry.value_ptr.deinit(allocator);
-                }
-                // Cast away const to call deinit
-                var bindings_mut = @as(*std.StringHashMap(Value), @ptrCast(@constCast(&a.bindings)));
-                bindings_mut.deinit();
-            },
-            .lambda => {
-                // Don't deinit the env, body, or param - they're managed elsewhere
-            },
-            .builtin => {},
-            .thunk => |t| {
-                t.expr.deinit(allocator);
-                allocator.destroy(t.expr);
-                t.env.deinit();
-                if (t.value) |v| {
-                    v.deinit(allocator);
-                }
-                allocator.destroy(t);
-            },
-        }
+        // With arena allocation, individual deinit is a no-op.
+        // The arena frees everything at once in Evaluator.deinit().
+        _ = self;
+        _ = allocator;
     }
 };
 
@@ -124,10 +97,9 @@ pub const Env = struct {
     }
 
     pub fn deinit(self: *Env) void {
-        var iter = self.bindings.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
+        // Don't recursively deinit values - they may be shared across
+        // multiple environments (e.g., thunks in let bindings, follows).
+        // Values are effectively arena-allocated for the evaluation lifetime.
         self.bindings.deinit();
         self.allocator.destroy(self);
     }
@@ -148,29 +120,84 @@ pub const Env = struct {
 };
 
 pub const Evaluator = struct {
-    allocator: std.mem.Allocator,
+    parent_allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     global_env: *Env,
+    io: std.Io,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        const global_env = try Env.init(allocator, null);
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) !Self {
+        var self = Self{
+            .parent_allocator = allocator,
+            .arena = std.heap.ArenaAllocator.init(allocator),
+            .global_env = undefined,
+            .io = io,
+        };
+
+        const global_env = try self.createEnv(null);
 
         // Register builtins
         try builtins.registerBuiltins(global_env);
 
-        return Self{
-            .allocator = allocator,
-            .global_env = global_env,
-        };
+        self.global_env = global_env;
+        return self;
     }
 
     pub fn deinit(self: *Self) void {
-        self.global_env.deinit();
+        self.arena.deinit();
+    }
+
+    /// Get the arena allocator for allocations during evaluation
+    pub inline fn alloc(self: *Self) std.mem.Allocator {
+        return self.arena.allocator();
+    }
+
+    /// Create an Env via the arena allocator.
+    pub fn createEnv(self: *Self, parent: ?*Env) !*Env {
+        const allocator = self.arena.allocator();
+        const env = try allocator.create(Env);
+        env.* = Env{
+            .allocator = allocator,
+            .bindings = std.StringHashMap(Value).init(allocator),
+            .parent = parent,
+        };
+        return env;
+    }
+
+    /// Create a Thunk via the arena allocator.
+    fn createThunk(self: *Self, expr: *Expr, env: *Env) !*Thunk {
+        const allocator = self.arena.allocator();
+        const thunk = try allocator.create(Thunk);
+        thunk.* = Thunk{
+            .expr = expr,
+            .env = env,
+            .value = null,
+            .evaluating = false,
+        };
+        return thunk;
+    }
+
+    /// Resolve an AttrPathPart to a string key.
+    /// Returns null if the key is a dynamic null (Nix skips such bindings).
+    fn resolveAttrKey(self: *Self, part: Expr.AttrPathPart, env: *Env) !?[]const u8 {
+        return switch (part) {
+            .ident => |id| id,
+            .string => |str| str,
+            .expr => |e| {
+                const val = try self.force(try self.evalInEnv(e.*, env));
+                return switch (val) {
+                    .string => val.string,
+                    .null_val => null, // Nix: { ${null} = val; } is skipped
+                    else => error.TypeError,
+                };
+            },
+        };
     }
 
     pub fn eval(self: *Self, expr: Expr) !Value {
-        return try self.evalInEnv(expr, self.global_env);
+        const result = try self.evalInEnv(expr, self.global_env);
+        return try self.force(result);
     }
 
     pub fn evalInEnv(self: *Self, expr: Expr, env: *Env) anyerror!Value {
@@ -181,43 +208,71 @@ pub const Evaluator = struct {
             .interpolated_string => |is| {
                 // Evaluate all parts and concatenate
                 var result: std.ArrayList(u8) = .empty;
-                defer result.deinit(self.allocator);
+                defer result.deinit(self.alloc());
 
                 for (is.parts) |part| {
                     switch (part) {
-                        .literal => |lit| try result.appendSlice(self.allocator, lit),
+                        .literal => |lit| try result.appendSlice(self.alloc(), lit),
                         .expr => |e| {
                             const val = try self.evalInEnv(e.*, env);
                             const forced = try self.force(val);
-                            // Coerce to string
+                            // Coerce to string (Nix string interpolation rules)
                             switch (forced) {
-                                .string => |s| try result.appendSlice(self.allocator, s),
+                                .string => |s| try result.appendSlice(self.alloc(), s),
                                 .int => |i| {
                                     var buf: [32]u8 = undefined;
                                     const s = std.fmt.bufPrint(&buf, "{d}", .{i}) catch "";
-                                    try result.appendSlice(self.allocator, s);
+                                    try result.appendSlice(self.alloc(), s);
                                 },
-                                .path => |p| try result.appendSlice(self.allocator, p),
-                                else => try result.appendSlice(self.allocator, "<value>"),
+                                .path => |p| try result.appendSlice(self.alloc(), p),
+                                .bool => |b| try result.appendSlice(self.alloc(), if (b) "1" else "0"),
+                                .null_val => try result.appendSlice(self.alloc(), ""),
+                                .attrs => |a| {
+                                    // Nix coerces attrsets with __toString or outPath
+                                    if (a.bindings.get("__toString")) |to_str_fn| {
+                                        const str_val = try self.apply(to_str_fn, forced);
+                                        const forced_str = try self.force(str_val);
+                                        if (forced_str == .string) {
+                                            try result.appendSlice(self.alloc(), forced_str.string);
+                                        }
+                                    } else if (a.bindings.get("outPath")) |out_path| {
+                                        const forced_path = try self.force(out_path);
+                                        switch (forced_path) {
+                                            .string => |s| try result.appendSlice(self.alloc(), s),
+                                            .path => |p| try result.appendSlice(self.alloc(), p),
+                                            else => return error.TypeError,
+                                        }
+                                    } else {
+                                        return error.TypeError;
+                                    }
+                                },
+                                .float => |f| {
+                                    var buf: [64]u8 = undefined;
+                                    const s = std.fmt.bufPrint(&buf, "{d}", .{f}) catch "";
+                                    try result.appendSlice(self.alloc(), s);
+                                },
+                                else => return error.TypeError,
                             }
                         },
                     }
                 }
-                return Value{ .string = try result.toOwnedSlice(self.allocator) };
+                return Value{ .string = try result.toOwnedSlice(self.alloc()) };
             },
             .path => |p| return Value{ .path = p },
             .uri => |u| return Value{ .string = u },
 
             .var_ref => |name| {
                 if (env.lookup(name)) |val| {
-                    return try self.force(val);
+                    // Don't force thunks here - Nix is lazy.
+                    // Thunks are forced at consumption points (attr access, arithmetic, etc.)
+                    return val;
                 }
                 std.debug.print("Undefined variable: {s}\n", .{name});
                 return error.UndefinedVariable;
             },
 
             .list => |l| {
-                var values = try self.allocator.alloc(Value, l.elements.len);
+                var values = try self.alloc().alloc(Value, l.elements.len);
                 for (l.elements, 0..) |elem, i| {
                     values[i] = try self.evalInEnv(elem, env);
                 }
@@ -225,38 +280,29 @@ pub const Evaluator = struct {
             },
 
             .attrs => |a| {
-                var attr_env = try Env.init(self.allocator, env);
-                defer if (!a.recursive) attr_env.deinit();
-                var bindings = std.StringHashMap(Value).init(self.allocator);
+                var attr_env = try self.createEnv(env);
+                _ = &attr_env;
+                var bindings = std.StringHashMap(Value).init(self.alloc());
 
                 // If recursive, evaluate in extended env
                 if (a.recursive) {
                     // First pass: create thunks
                     for (a.bindings) |binding| {
                         if (binding.key.parts.len == 1) {
-                            if (binding.key.parts[0] == .ident) {
-                                const key = binding.key.parts[0].ident;
-                                const thunk = try self.allocator.create(Thunk);
-                                thunk.* = Thunk{
-                                    .expr = binding.value,
-                                    .env = attr_env,
-                                    .value = null,
-                                    .evaluating = false,
-                                };
-                                try bindings.put(key, Value{ .thunk = thunk });
-                                try attr_env.define(key, Value{ .thunk = thunk });
-                            }
+                            const key = try self.resolveAttrKey(binding.key.parts[0], attr_env) orelse continue;
+                            const thunk = try self.createThunk(binding.value, attr_env);
+                            try bindings.put(key, Value{ .thunk = thunk });
+                            try attr_env.define(key, Value{ .thunk = thunk });
                         }
                     }
                 } else {
-                    // Non-recursive: evaluate immediately
+                    // Non-recursive: still use thunks for lazy evaluation.
+                    // Nix attrset values are lazy even in non-recursive sets.
                     for (a.bindings) |binding| {
                         if (binding.key.parts.len == 1) {
-                            if (binding.key.parts[0] == .ident) {
-                                const key = binding.key.parts[0].ident;
-                                const value = try self.evalInEnv(binding.value.*, env);
-                                try bindings.put(key, value);
-                            }
+                            const key = try self.resolveAttrKey(binding.key.parts[0], env) orelse continue;
+                            const thunk = try self.createThunk(binding.value, env);
+                            try bindings.put(key, Value{ .thunk = thunk });
                         }
                     }
                 }
@@ -278,11 +324,7 @@ pub const Evaluator = struct {
                 // Navigate through attribute path
                 var current = forced.attrs;
                 for (s.path.parts, 0..) |part, i| {
-                    const key = switch (part) {
-                        .ident => |id| id,
-                        .string => |str| str,
-                        else => return error.DynamicAttrPath,
-                    };
+                    const key = try self.resolveAttrKey(part, env) orelse return error.DynamicAttrPath;
 
                     if (current.bindings.get(key)) |val| {
                         if (i == s.path.parts.len - 1) {
@@ -307,13 +349,13 @@ pub const Evaluator = struct {
             },
 
             .call => |c| {
-                const func = try self.force(try self.evalInEnv(c.func.*, env));
+                const raw_func = try self.evalInEnv(c.func.*, env);
+                const func = try self.force(raw_func);
                 const arg = try self.evalInEnv(c.arg.*, env);
 
                 switch (func) {
                     .lambda => |lam| {
-                        const call_env = try Env.init(self.allocator, lam.env);
-                        defer call_env.deinit();
+                        const call_env = try self.createEnv(lam.env);
 
                         switch (lam.param) {
                             .ident => |name| {
@@ -325,19 +367,20 @@ pub const Evaluator = struct {
                                     return error.PatternMatchFailed;
                                 }
 
+                                // Bind @name first so defaults can reference it
+                                if (p.at_name) |at| {
+                                    try call_env.define(at, arg);
+                                }
+
                                 for (p.formals) |formal| {
                                     if (forced_arg.attrs.bindings.get(formal.name)) |val| {
                                         try call_env.define(formal.name, val);
                                     } else if (formal.default) |def| {
-                                        const default_val = try self.evalInEnv(def.*, lam.env);
+                                        const default_val = try self.evalInEnv(def.*, call_env);
                                         try call_env.define(formal.name, default_val);
                                     } else {
                                         return error.MissingAttribute;
                                     }
-                                }
-
-                                if (p.at_name) |at| {
-                                    try call_env.define(at, arg);
                                 }
                             },
                         }
@@ -345,11 +388,38 @@ pub const Evaluator = struct {
                         return try self.evalInEnv(lam.body.*, call_env);
                     },
                     .builtin => |b| {
-                        const args = try self.allocator.alloc(Value, 1);
-                        args[0] = arg;
-                        return try b.func(self.allocator, args);
+                        // Collect args (including any partial args from currying)
+                        const prev_args = b.partial_args orelse &[_]Value{};
+                        const total_args = prev_args.len + 1;
+
+                        if (total_args < b.arity) {
+                            // Not enough args yet - return a new partial application
+                            const new_partial = try self.alloc().alloc(Value, total_args);
+                            @memcpy(new_partial[0..prev_args.len], prev_args);
+                            new_partial[prev_args.len] = arg;
+                            return Value{
+                                .builtin = .{
+                                    .name = b.name,
+                                    .func = b.func,
+                                    .arity = b.arity,
+                                    .partial_args = new_partial,
+                                },
+                            };
+                        }
+
+                        // Have all args - force them and call the function
+                        const args = try self.alloc().alloc(Value, total_args);
+                        @memcpy(args[0..prev_args.len], prev_args);
+                        args[prev_args.len] = arg;
+                        // Force all args before passing to builtin
+                        for (args) |*a| {
+                            a.* = try self.force(a.*);
+                        }
+                        return try b.func(self, self.io, self.alloc(), args);
                     },
-                    else => return error.NotAFunction,
+                    else => {
+                        return error.NotAFunction;
+                    },
                 }
             },
 
@@ -364,16 +434,15 @@ pub const Evaluator = struct {
             },
 
             .let_in => |l| {
-                const let_env = try Env.init(self.allocator, env);
-                defer let_env.deinit();
+                const let_env = try self.createEnv(env);
 
+                // Nix let bindings are mutually recursive, so first create
+                // thunks for all bindings, then evaluate the body.
                 for (l.bindings) |binding| {
                     if (binding.key.parts.len == 1) {
-                        if (binding.key.parts[0] == .ident) {
-                            const key = binding.key.parts[0].ident;
-                            const value = try self.evalInEnv(binding.value.*, let_env);
-                            try let_env.define(key, value);
-                        }
+                        const key = try self.resolveAttrKey(binding.key.parts[0], let_env) orelse continue;
+                        const thunk = try self.createThunk(binding.value, let_env);
+                        try let_env.define(key, Value{ .thunk = thunk });
                     }
                 }
 
@@ -397,8 +466,7 @@ pub const Evaluator = struct {
                     return error.WithRequiresAttrSet;
                 }
 
-                const with_env = try Env.init(self.allocator, env);
-                defer with_env.deinit();
+                const with_env = try self.createEnv(env);
                 var iter = with_set.attrs.bindings.iterator();
                 while (iter.next()) |entry| {
                     try with_env.define(entry.key_ptr.*, entry.value_ptr.*);
@@ -429,6 +497,32 @@ pub const Evaluator = struct {
     }
 
     fn evalBinaryOp(self: *Self, op: Expr.BinaryOperator, left: Expr, right: Expr, env: *Env) !Value {
+        // Short-circuit operators: don't evaluate right side eagerly
+        switch (op) {
+            .and_op => {
+                const lval = try self.force(try self.evalInEnv(left, env));
+                const l = try self.toBool(lval);
+                if (!l) return Value{ .bool = false };
+                const rval = try self.force(try self.evalInEnv(right, env));
+                return Value{ .bool = try self.toBool(rval) };
+            },
+            .or_op => {
+                const lval = try self.force(try self.evalInEnv(left, env));
+                const l = try self.toBool(lval);
+                if (l) return Value{ .bool = true };
+                const rval = try self.force(try self.evalInEnv(right, env));
+                return Value{ .bool = try self.toBool(rval) };
+            },
+            .implies => {
+                const lval = try self.force(try self.evalInEnv(left, env));
+                const l = try self.toBool(lval);
+                if (!l) return Value{ .bool = true };
+                const rval = try self.force(try self.evalInEnv(right, env));
+                return Value{ .bool = try self.toBool(rval) };
+            },
+            else => {},
+        }
+
         const lval = try self.force(try self.evalInEnv(left, env));
         const rval = try self.force(try self.evalInEnv(right, env));
 
@@ -438,9 +532,24 @@ pub const Evaluator = struct {
                     return Value{ .int = lval.int + rval.int };
                 }
                 if (lval == .float or rval == .float) {
-                    const l = if (lval == .int) @as(f64, @floatFromInt(lval.int)) else lval.float;
-                    const r = if (rval == .int) @as(f64, @floatFromInt(rval.int)) else rval.float;
+                    const l = if (lval == .int) @as(f64, @floatFromInt(lval.int)) else if (lval == .float) lval.float else return error.TypeError;
+                    const r = if (rval == .int) @as(f64, @floatFromInt(rval.int)) else if (rval == .float) rval.float else return error.TypeError;
                     return Value{ .float = l + r };
+                }
+                // String concatenation
+                if (lval == .string and rval == .string) {
+                    const result = try std.mem.concat(self.alloc(), u8, &.{ lval.string, rval.string });
+                    return Value{ .string = result };
+                }
+                // Path + string = path concatenation
+                if (lval == .path and rval == .string) {
+                    const result = try std.mem.concat(self.alloc(), u8, &.{ lval.path, rval.string });
+                    return Value{ .path = result };
+                }
+                // String + path = string concatenation
+                if (lval == .string and rval == .path) {
+                    const result = try std.mem.concat(self.alloc(), u8, &.{ lval.string, rval.path });
+                    return Value{ .string = result };
                 }
                 return error.TypeError;
             },
@@ -480,7 +589,7 @@ pub const Evaluator = struct {
             },
             .concat => {
                 if (lval == .list and rval == .list) {
-                    const new_list = try self.allocator.alloc(Value, lval.list.len + rval.list.len);
+                    const new_list = try self.alloc().alloc(Value, lval.list.len + rval.list.len);
                     @memcpy(new_list[0..lval.list.len], lval.list);
                     @memcpy(new_list[lval.list.len..], rval.list);
                     return Value{ .list = new_list };
@@ -489,7 +598,7 @@ pub const Evaluator = struct {
             },
             .update => {
                 if (lval == .attrs and rval == .attrs) {
-                    var new_bindings = std.StringHashMap(Value).init(self.allocator);
+                    var new_bindings = std.StringHashMap(Value).init(self.alloc());
                     var iter = lval.attrs.bindings.iterator();
                     while (iter.next()) |entry| {
                         try new_bindings.put(entry.key_ptr.*, entry.value_ptr.*);
@@ -516,33 +625,56 @@ pub const Evaluator = struct {
                         },
                     };
                 }
+                if (lval == .string and rval == .string) {
+                    const order = std.mem.order(u8, lval.string, rval.string);
+                    return Value{
+                        .bool = switch (op) {
+                            .lt => order == .lt,
+                            .lte => order != .gt,
+                            .gt => order == .gt,
+                            .gte => order != .lt,
+                            else => unreachable,
+                        },
+                    };
+                }
+                if (lval == .float or rval == .float) {
+                    const l = if (lval == .int) @as(f64, @floatFromInt(lval.int)) else if (lval == .float) lval.float else return error.TypeError;
+                    const r = if (rval == .int) @as(f64, @floatFromInt(rval.int)) else if (rval == .float) rval.float else return error.TypeError;
+                    return Value{
+                        .bool = switch (op) {
+                            .lt => l < r,
+                            .lte => l <= r,
+                            .gt => l > r,
+                            .gte => l >= r,
+                            else => unreachable,
+                        },
+                    };
+                }
                 return error.TypeError;
             },
-            .and_op => {
-                const l = try self.toBool(lval);
-                if (!l) return Value{ .bool = false };
-                return Value{ .bool = try self.toBool(rval) };
-            },
-            .or_op => {
-                const l = try self.toBool(lval);
-                if (l) return Value{ .bool = true };
-                return Value{ .bool = try self.toBool(rval) };
-            },
-            .implies => {
-                const l = try self.toBool(lval);
-                if (!l) return Value{ .bool = true };
-                return Value{ .bool = try self.toBool(rval) };
-            },
+            .and_op, .or_op, .implies => unreachable, // handled above as short-circuit
             .has_attr => {
                 // lval ? attr  - check if attrset has the attribute
-                // Note: rval should be a var_ref representing the attribute name
-                // In Nix, `set ? attr` has attr as an identifier, not evaluated
-                // For now, we check if lval is an attrset and rval is a string key
                 if (lval != .attrs) return Value{ .bool = false };
                 if (rval == .string) {
                     return Value{ .bool = lval.attrs.bindings.contains(rval.string) };
                 }
-                // The right side is usually a var_ref that wasn't evaluated
+                if (rval == .list) {
+                    // Multi-part attr path encoded as a list of strings
+                    var current_set = lval.attrs;
+                    for (rval.list, 0..) |part, i| {
+                        const key = if (part == .string) part.string else return Value{ .bool = false };
+                        if (current_set.bindings.get(key)) |val| {
+                            if (i == rval.list.len - 1) return Value{ .bool = true };
+                            const forced_val = try self.force(val);
+                            if (forced_val != .attrs) return Value{ .bool = false };
+                            current_set = forced_val.attrs;
+                        } else {
+                            return Value{ .bool = false };
+                        }
+                    }
+                    return Value{ .bool = false };
+                }
                 return Value{ .bool = false };
             },
         }
@@ -569,10 +701,12 @@ pub const Evaluator = struct {
     }
 
     pub fn force(self: *Self, value: Value) anyerror!Value {
-        if (value == .thunk) {
-            const thunk = value.thunk;
+        var current = value;
+        while (current == .thunk) {
+            const thunk = current.thunk;
             if (thunk.value) |val| {
-                return val;
+                current = val;
+                continue;
             }
             if (thunk.evaluating) {
                 return error.InfiniteRecursion;
@@ -583,9 +717,9 @@ pub const Evaluator = struct {
             thunk.value = result;
             thunk.evaluating = false;
 
-            return result;
+            current = result;
         }
-        return value;
+        return current;
     }
 
     /// Apply a function value to an argument
@@ -594,8 +728,7 @@ pub const Evaluator = struct {
 
         switch (forced_func) {
             .lambda => |lam| {
-                const call_env = try Env.init(self.allocator, lam.env);
-                defer call_env.deinit();
+                const call_env = try self.createEnv(lam.env);
 
                 switch (lam.param) {
                     .ident => |name| {
@@ -607,19 +740,20 @@ pub const Evaluator = struct {
                             return error.PatternMatchFailed;
                         }
 
+                        // Bind @name first so defaults can reference it
+                        if (p.at_name) |at| {
+                            try call_env.define(at, arg);
+                        }
+
                         for (p.formals) |formal| {
                             if (forced_arg.attrs.bindings.get(formal.name)) |val| {
                                 try call_env.define(formal.name, val);
                             } else if (formal.default) |def| {
-                                const default_val = try self.evalInEnv(def.*, lam.env);
+                                const default_val = try self.evalInEnv(def.*, call_env);
                                 try call_env.define(formal.name, default_val);
                             } else if (!p.ellipsis) {
                                 return error.MissingAttribute;
                             }
-                        }
-
-                        if (p.at_name) |at| {
-                            try call_env.define(at, arg);
                         }
                     },
                 }
@@ -627,9 +761,30 @@ pub const Evaluator = struct {
                 return try self.evalInEnv(lam.body.*, call_env);
             },
             .builtin => |b| {
-                const args = try self.allocator.alloc(Value, 1);
-                args[0] = arg;
-                return try b.func(self.allocator, args);
+                const prev_args = b.partial_args orelse &[_]Value{};
+                const total_args = prev_args.len + 1;
+
+                if (total_args < b.arity) {
+                    const new_partial = try self.alloc().alloc(Value, total_args);
+                    @memcpy(new_partial[0..prev_args.len], prev_args);
+                    new_partial[prev_args.len] = arg;
+                    return Value{
+                        .builtin = .{
+                            .name = b.name,
+                            .func = b.func,
+                            .arity = b.arity,
+                            .partial_args = new_partial,
+                        },
+                    };
+                }
+
+                const args = try self.alloc().alloc(Value, total_args);
+                @memcpy(args[0..prev_args.len], prev_args);
+                args[prev_args.len] = arg;
+                for (args) |*a| {
+                    a.* = try self.force(a.*);
+                }
+                return try b.func(self, self.io, self.alloc(), args);
             },
             else => return error.NotAFunction,
         }
@@ -644,7 +799,7 @@ pub const Evaluator = struct {
         };
     }
 
-    fn equal(self: *Self, lval: Value, rval: Value) !bool {
+    pub fn equal(self: *Self, lval: Value, rval: Value) !bool {
         _ = self;
         if (@intFromEnum(lval) != @intFromEnum(rval)) return false;
 
@@ -662,8 +817,9 @@ pub const Evaluator = struct {
 
 test "evaluator basic" {
     const allocator = std.testing.allocator;
+    const io = std.Io.Threaded.global_single_threaded.io();
 
-    var evaluator = try Evaluator.init(allocator);
+    var evaluator = try Evaluator.init(allocator, io);
     defer evaluator.deinit();
 
     // Test integer

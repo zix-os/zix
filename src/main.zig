@@ -19,6 +19,7 @@ pub fn main(init: std.process.Init) !void {
     var mode: Mode = .eval;
     var print_ast = false;
     var attr_path: ?[]const u8 = null;
+    var expr_string: ?[]const u8 = null;
 
     var args_iter = try std.process.Args.Iterator.initAllocator(init.minimal.args, allocator);
     defer args_iter.deinit();
@@ -74,6 +75,11 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
             printHelp();
             return;
+        } else if (std.mem.eql(u8, arg, "--expr")) {
+            expr_string = args_iter.next() orelse {
+                std.debug.print("Error: --expr requires an expression argument\n", .{});
+                return error.InvalidArgument;
+            };
         } else if (std.mem.startsWith(u8, arg, "-") and !std.mem.startsWith(u8, arg, ".")) {
             std.debug.print("Unknown option: {s}\n", .{arg});
             printHelp();
@@ -90,70 +96,60 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    var file_holder: ?std.Io.File = null;
+    defer if (file_holder) |f| f.close(io);
+
+    var file_reader_holder: File.Reader = undefined;
+    var fixed_reader_holder: std.Io.Reader = undefined;
+    var read_buf: [4096]u8 = undefined;
+
+    const source: *std.Io.Reader = blk: {
+        if (expr_string) |expr| {
+            fixed_reader_holder = std.Io.Reader.fixed(expr);
+            break :blk &fixed_reader_holder;
+        } else if (input_file) |file_path| {
+            const stat = Dir.statFile(.cwd(), io, file_path, .{}) catch {
+                const file = try Dir.openFile(.cwd(), io, file_path, .{});
+                file_holder = file;
+                file_reader_holder = file.readerStreaming(io, &read_buf);
+                break :blk &file_reader_holder.interface;
+            };
+
+            if (stat.kind == .directory) {
+                const flake_path = try std.fs.path.join(allocator, &.{ file_path, "flake.nix" });
+                defer allocator.free(flake_path);
+
+                const file = try Dir.openFile(.cwd(), io, flake_path, .{});
+                file_holder = file;
+                file_reader_holder = file.readerStreaming(io, &read_buf);
+                break :blk &file_reader_holder.interface;
+            }
+
+            const file = try Dir.openFile(.cwd(), io, file_path, .{});
+            file_holder = file;
+            file_reader_holder = file.readerStreaming(io, &read_buf);
+            break :blk &file_reader_holder.interface;
+        } else {
+            const stdin = File.stdin();
+            const stdin_is_tty = try stdin.isTty(io);
+            if (stdin_is_tty) {
+                printHelp();
+                return;
+            }
+            file_reader_holder = stdin.readerStreaming(io, &read_buf);
+            break :blk &file_reader_holder.interface;
+        }
+    };
+
     switch (mode) {
-        .lex => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runLexer(allocator, source);
-        },
-        .parse => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runParser(allocator, source, print_ast);
-        },
-        .eval => {
-            const source = try getSource(allocator, io, input_file);
-            defer allocator.free(source);
-            try runEvaluator(allocator, source, input_file);
-        },
+        .lex => try runLexer(allocator, source),
+        .parse => try runParser(allocator, source, print_ast),
+        .eval => try runEvaluator(allocator, io, source, input_file),
         .build => try runBuild(allocator, io, input_file orelse ".", attr_path),
         .flake_show => try runFlakeShow(allocator, io, input_file orelse "."),
         .flake_metadata => try runFlakeMetadata(allocator, io, input_file orelse "."),
         .flake_lock => try runFlakeLock(allocator, io, input_file orelse "."),
         .repl => try runRepl(allocator, io),
-    }
-}
-
-fn getSource(allocator: std.mem.Allocator, io: Io, input_file: ?[]const u8) ![]u8 {
-    if (input_file) |file_path| {
-        // Check if it's a directory (flake)
-        const stat = Dir.statFile(.cwd(), io, file_path, .{}) catch {
-            // Try as direct file
-            const file = try Dir.openFile(.cwd(), io, file_path, .{});
-            defer file.close(io);
-            var read_buf: [8192]u8 = undefined;
-            var reader = file.reader(io, &read_buf);
-            const len = try file.length(io);
-            return try reader.interface.readAlloc(allocator, @intCast(len));
-        };
-
-        if (stat.kind == .directory) {
-            // It's a flake directory
-            const flake_path = try std.fs.path.join(allocator, &.{ file_path, "default.nix" });
-            defer allocator.free(flake_path);
-
-            const file = Dir.openFile(.cwd(), io, flake_path, .{}) catch {
-                return error.NoDefaultNix;
-            };
-            defer file.close(io);
-            var read_buf: [8192]u8 = undefined;
-            var reader = file.reader(io, &read_buf);
-            const len = try file.length(io);
-            return try reader.interface.readAlloc(allocator, @intCast(len));
-        }
-
-        const file = try Dir.openFile(.cwd(), io, file_path, .{});
-        defer file.close(io);
-        var read_buf: [8192]u8 = undefined;
-        var reader = file.reader(io, &read_buf);
-        const len = try file.length(io);
-        return try reader.interface.readAlloc(allocator, @intCast(len));
-    } else {
-        // Read from stdin
-        const stdin = File.stdin();
-        var read_buf: [65536]u8 = undefined;
-        var reader = stdin.reader(io, &read_buf);
-        return try reader.interface.allocRemaining(allocator, .unlimited);
     }
 }
 
@@ -185,7 +181,7 @@ fn printHelp() void {
         \\
         \\Options:
         \\  --lex        Tokenize and print tokens only
-        \\  --parse      Parse and print AST only  
+        \\  --parse      Parse and print AST only
         \\  --ast        Print AST when evaluating
         \\  -h, --help   Show this help message
         \\
@@ -203,7 +199,7 @@ fn printHelp() void {
     , .{});
 }
 
-fn runLexer(allocator: std.mem.Allocator, source: []const u8) !void {
+fn runLexer(allocator: std.mem.Allocator, source: *std.Io.Reader) !void {
     var lex = lexer.Lexer.init(allocator, source, "<input>");
     defer lex.deinit();
 
@@ -226,7 +222,7 @@ fn runLexer(allocator: std.mem.Allocator, source: []const u8) !void {
     }
 }
 
-fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) !void {
+fn runParser(allocator: std.mem.Allocator, source: *std.Io.Reader, print_ast: bool) !void {
     var p = try parser.Parser.init(allocator, source, "<input>");
     defer p.deinit();
 
@@ -241,37 +237,43 @@ fn runParser(allocator: std.mem.Allocator, source: []const u8, print_ast: bool) 
     }
 }
 
-fn runEvaluator(allocator: std.mem.Allocator, source: []const u8, file_path: ?[]const u8) !void {
-    // Parse
-    var p = try parser.Parser.init(allocator, source, file_path orelse "<stdin>");
-    defer p.deinit();
-    const ast_expr = try p.parseExpr();
-    defer ast_expr.deinit(allocator);
-
-    // Evaluate
-    var evaluator = try eval.Evaluator.init(allocator);
+fn runEvaluator(allocator: std.mem.Allocator, io: Io, source: *std.Io.Reader, file_path: ?[]const u8) !void {
+    // Create evaluator first so we can use its arena for parsing
+    var evaluator = try eval.Evaluator.init(allocator, io);
     defer evaluator.deinit();
 
+    // Parse using arena allocator so AST strings survive
+    const arena_allocator = evaluator.arena.allocator();
+    var p = try parser.Parser.init(arena_allocator, source, file_path orelse "<stdin>");
+    defer p.deinit();
+    const ast_expr = try p.parseExpr();
+
     const result = try evaluator.eval(ast_expr);
-    defer result.deinit(allocator);
+    // Don't deinit result - values are shared across envs/thunks.
+    // The allocator (arena) will reclaim everything on evaluator.deinit().
 
     // Print result
-    printValue(result);
+    // Print result - force thunks for display
+    printValue(result, &evaluator);
     std.debug.print("\n", .{});
+
+    // AST is owned by arena now, no need to deinit separately
 }
 
-fn printValue(value: eval.Value) void {
-    switch (value) {
-        .int => |v| std.debug.print("{}", .{v}),
-        .float => |v| std.debug.print("{d}", .{v}),
-        .bool => |v| std.debug.print("{}", .{v}),
+fn printValue(value: eval.Value, evaluator: ?*eval.Evaluator) void {
+    // Force thunks before printing if we have an evaluator
+    const v = if (value == .thunk and evaluator != null) (evaluator.?.force(value) catch value) else value;
+    switch (v) {
+        .int => |i| std.debug.print("{}", .{i}),
+        .float => |f| std.debug.print("{d}", .{f}),
+        .bool => |b| std.debug.print("{}", .{b}),
         .string => |s| std.debug.print("\"{s}\"", .{s}),
         .path => |p| std.debug.print("{s}", .{p}),
         .null_val => std.debug.print("null", .{}),
         .list => |l| {
             std.debug.print("[ ", .{});
             for (l) |item| {
-                printValue(item);
+                printValue(item, evaluator);
                 std.debug.print(" ", .{});
             }
             std.debug.print("]", .{});
@@ -283,7 +285,7 @@ fn printValue(value: eval.Value) void {
             while (iter.next()) |entry| {
                 if (count > 0) std.debug.print("; ", .{});
                 std.debug.print("{s} = ", .{entry.key_ptr.*});
-                printValue(entry.value_ptr.*);
+                printValue(entry.value_ptr.*, evaluator);
                 count += 1;
                 if (count >= 5) {
                     std.debug.print("; ...", .{});
@@ -305,7 +307,7 @@ fn runBuild(allocator: std.mem.Allocator, io: Io, flake_ref: []const u8, attr_pa
     }
     std.debug.print("...\n", .{});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     // Determine the attribute path to build
@@ -327,7 +329,7 @@ fn runBuild(allocator: std.mem.Allocator, io: Io, flake_ref: []const u8, attr_pa
 fn runFlakeShow(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Showing flake outputs for {s}...\n\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -354,10 +356,17 @@ fn runFlakeShow(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
         std.debug.print("\n", .{});
     }
 
-    // Try to evaluate outputs
-    var resolved = fe.resolve(fl) catch |err| {
-        std.debug.print("Failed to resolve flake: {}\n", .{err});
-        return err;
+    // Resolve inputs with progress
+    var resolved = resolve_blk: {
+        var draw_buffer_show: [4096]u8 = undefined;
+        const progress_root_show = std.Progress.start(io, .{
+            .draw_buffer = &draw_buffer_show,
+        });
+        defer progress_root_show.end();
+        break :resolve_blk fe.resolve(io, fl, progress_root_show) catch |err| {
+            std.debug.print("Failed to resolve flake: {}\n", .{err});
+            return err;
+        };
     };
     defer resolved.deinit();
 
@@ -400,7 +409,7 @@ fn printFlakeOutputs(allocator: std.mem.Allocator, bindings: std.StringHashMap(e
             std.debug.print("├───{s}: <function>\n", .{key});
         } else {
             std.debug.print("├───{s}: ", .{key});
-            printValue(val);
+            printValue(val, null);
             std.debug.print("\n", .{});
         }
     }
@@ -409,7 +418,7 @@ fn printFlakeOutputs(allocator: std.mem.Allocator, bindings: std.StringHashMap(e
 fn runFlakeMetadata(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Flake metadata for {s}\n\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -436,7 +445,7 @@ fn runFlakeMetadata(allocator: std.mem.Allocator, io: Io, path: []const u8) !voi
 fn runFlakeLock(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     std.debug.print("Updating flake.lock for {s}...\n", .{path});
 
-    var fe = try flake.FlakeEvaluator.init(allocator);
+    var fe = try flake.FlakeEvaluator.init(allocator, io);
     defer fe.deinit();
 
     var fl = fe.loadFlakeWithIo(io, path) catch |err| {
@@ -445,9 +454,16 @@ fn runFlakeLock(allocator: std.mem.Allocator, io: Io, path: []const u8) !void {
     };
     defer fl.deinit();
 
-    var resolved = fe.resolve(fl) catch |err| {
-        std.debug.print("Failed to resolve flake: {}\n", .{err});
-        return err;
+    var resolved = resolve_blk: {
+        var draw_buffer_lock: [4096]u8 = undefined;
+        const progress_root_lock = std.Progress.start(io, .{
+            .draw_buffer = &draw_buffer_lock,
+        });
+        defer progress_root_lock.end();
+        break :resolve_blk fe.resolve(io, fl, progress_root_lock) catch |err| {
+            std.debug.print("Failed to resolve flake: {}\n", .{err});
+            return err;
+        };
     };
     defer resolved.deinit();
 

@@ -13,6 +13,8 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    // Large stack for deep Nix evaluation (recursive let bindings, imports)
+    exe.stack_size = 128 * 1024 * 1024; // 128 MB
     b.installArtifact(exe);
 
     // Run command
